@@ -5,7 +5,13 @@ without building anything or being signed in to GitHub Actions.
 
 | File | Built from |
 | --- | --- |
-| `Medieval-0.1.0-SNAPSHOT.jar` | the `main` commit that added the hidden owner catalogue |
+| `Medieval-0.1.0-SNAPSHOT.jar` | the `main` commit that added the runtime deathban toggle and the catalogue's chat search |
+
+What that jar's `/medieval statuscheck` offers: a paged, tabbed chest GUI of every item the server
+knows about, with a chat-typed search (`cancel` abandons it), next/previous buttons that dim instead
+of vanishing on the first and last page, and a Take amount button for touch players. What
+`/medieval deathban` offers: `check|set|clear|list` plus `on|off|toggle`, `duration <time>`,
+`status` and `reset` for the rule itself, persisted so a change survives a restart.
 
 ## Install
 

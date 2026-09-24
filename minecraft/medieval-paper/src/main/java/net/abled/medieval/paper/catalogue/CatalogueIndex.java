@@ -1,6 +1,7 @@
 package net.abled.medieval.paper.catalogue;
 
 import net.abled.medieval.core.catalogue.CatalogueCategory;
+import net.abled.medieval.core.catalogue.CatalogueQuery;
 import org.bukkit.Material;
 import org.bukkit.inventory.CreativeCategory;
 
@@ -30,6 +31,8 @@ import java.util.Set;
  *   <li>The admin tab is an explicit list. The client keeps command blocks, barriers and debug
  *       sticks in an "operator utilities" group that the server API does not expose, so it cannot
  *       be asked for and has to be named.</li>
+ *   <li>Searches run over Everything and ignore the tabs ({@link #search(String)}), because a query
+ *       that came back empty only because the wrong tab was open would look broken.</li>
  * </ul>
  *
  * <p>A material the server reports no category for is still listed under Everything rather than
@@ -82,6 +85,22 @@ public final class CatalogueIndex {
 
     public int size(CatalogueCategory category) {
         return of(category).size();
+    }
+
+    /**
+     * Items matching a search query, in registry order.
+     *
+     * <p>Searched over Everything rather than the current tab, so a query cannot come back empty
+     * just because the player was looking at the wrong tab. Both the item id and the enum name are
+     * offered to the matcher, which normalises {@code _}, {@code -} and case, so {@code diamond
+     * sword}, {@code diamond_sword} and {@code DIAMOND_SWORD} all find the same item.
+     *
+     * <p>Thread ownership: call from the tick thread, like every other accessor here.
+     */
+    public List<Material> search(String query) {
+        return of(CatalogueCategory.ALL).stream()
+                .filter(material -> CatalogueQuery.matches(query, material.getKey().getKey(), material.name()))
+                .toList();
     }
 
     /** How many items the catalogue knows about in total, for the startup log. */

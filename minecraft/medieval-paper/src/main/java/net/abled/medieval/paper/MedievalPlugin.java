@@ -6,19 +6,25 @@ import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.core.config.MedievalSettings;
 import net.abled.medieval.core.config.SettingsLoader;
+import net.abled.medieval.core.deathban.DeathbanPolicy;
 import net.abled.medieval.core.deathban.DeathbanService;
 import net.abled.medieval.core.message.MessageService;
 import net.abled.medieval.core.player.PlayerIdentityService;
+import net.abled.medieval.core.util.TimeFormat;
 import net.abled.medieval.core.world.DimensionAccessService;
 import net.abled.medieval.paper.capability.CapabilityReport;
 import net.abled.medieval.paper.catalogue.CatalogueIndex;
 import net.abled.medieval.paper.catalogue.CatalogueListener;
+import net.abled.medieval.paper.catalogue.CatalogueSearch;
+import net.abled.medieval.paper.catalogue.CatalogueSearchListener;
 import net.abled.medieval.paper.command.CatalogueCommand;
 import net.abled.medieval.paper.command.DeathbanCommands;
 import net.abled.medieval.paper.command.DimensionCommands;
+import net.abled.medieval.paper.command.LandCommands;
 import net.abled.medieval.paper.command.MedievalCommandRegistrar;
 import net.abled.medieval.paper.compat.PaperScheduler;
 import net.abled.medieval.paper.config.PaperSettingsSource;
+import net.abled.medieval.paper.land.BlockSearchService;
 import net.abled.medieval.paper.listener.DeathbanListener;
 import net.abled.medieval.paper.listener.DimensionGateListener;
 import net.abled.medieval.paper.listener.LoginGateListener;
@@ -54,6 +60,7 @@ public final class MedievalPlugin extends JavaPlugin {
     private MedievalScheduler scheduler;
     private PaperStorage storage;
     private DimensionAccessService dimensions;
+    private DeathbanPolicy deathbanPolicy;
 
     @Override
     public void onEnable() {
@@ -79,7 +86,18 @@ public final class MedievalPlugin extends JavaPlugin {
         this.core = new MedievalCore(platform, settings);
 
         PlayerIdentityService identities = new PlayerIdentityService(storage.players());
-        DeathbanService deathbans = DeathbanService.withSystemClock(core::settings, storage.deathbans());
+
+        // The live deathban rules. config.yml supplies the defaults; a toggle or a duration set at
+        // runtime is written to world_state and decides from then on, so a switch an administrator
+        // flips during an event survives the next restart - which is the whole point of a toggle.
+        this.deathbanPolicy = new DeathbanPolicy(core::settings, storage.worldState(),
+                message -> getLogger().warning(message));
+        deathbanPolicy.load();
+
+        // The deathban service reads its rules through this supplier, so it always sees the live
+        // values and never has to know that a policy exists.
+        DeathbanService deathbans = DeathbanService.withSystemClock(
+                () -> deathbanPolicy.apply(core.settings()), storage.deathbans());
 
         // The gate reads its persisted state once, before any listener can ask it for an answer.
         this.dimensions = new DimensionAccessService(core::settings, storage.worldState(), core.eventBus(),
@@ -89,6 +107,7 @@ public final class MedievalPlugin extends JavaPlugin {
         core.services().register(MessageService.class, messages);
         core.services().register(PlayerIdentityService.class, identities);
         core.services().register(DeathbanService.class, deathbans);
+        core.services().register(DeathbanPolicy.class, deathbanPolicy);
         core.services().register(DimensionAccessService.class, dimensions);
         core.enable();
 
@@ -99,10 +118,20 @@ public final class MedievalPlugin extends JavaPlugin {
         CatalogueCommand catalogueCommands = new CatalogueCommand(catalogue, renderer,
                 () -> OwnerGate.of(core.settings().admin().secretOwner()), getLogger());
 
+        // Chat is the only text input Geyser carries to Bedrock, so the catalogue's search asks in
+        // chat and the answer is captured from the chat event.
+        CatalogueSearch catalogueSearch = new CatalogueSearch(scheduler, renderer);
+
+        // The closest-block search. Its walking happens on one shared tick task rather than one task per
+        // search, so ten players searching cost ten slices of a tick, not ten schedulers.
+        BlockSearchService blockSearch = new BlockSearchService(scheduler, renderer, core::settings, getLogger());
+        blockSearch.start();
+
         DimensionCommands dimensionCommands = new DimensionCommands(dimensions, scheduler, renderer, getLogger());
         new MedievalCommandRegistrar(this, core, renderer,
-                new DeathbanCommands(deathbans, identities, scheduler, renderer, getLogger()),
-                dimensionCommands, catalogueCommands)
+                new DeathbanCommands(deathbans, deathbanPolicy, identities, scheduler, renderer, getLogger()),
+                dimensionCommands, catalogueCommands,
+                new LandCommands(blockSearch, renderer, blockSearch::isEnabled))
                 .register();
 
         getServer().getPluginManager().registerEvents(
@@ -111,17 +140,28 @@ public final class MedievalPlugin extends JavaPlugin {
                 new DeathbanListener(deathbans, renderer, getLogger()), this);
         getServer().getPluginManager().registerEvents(
                 new DimensionGateListener(dimensions, renderer), this);
-        getServer().getPluginManager().registerEvents(new CatalogueListener(renderer), this);
+        getServer().getPluginManager().registerEvents(
+                new CatalogueListener(renderer, catalogueSearch), this);
+        getServer().getPluginManager().registerEvents(
+                new CatalogueSearchListener(catalogueSearch), this);
 
         scheduler.runAsyncRepeating(() -> purgeExpiredBans(deathbans), PURGE_INITIAL_DELAY, PURGE_PERIOD);
 
         new CapabilityReport(this, platform).log();
         getLogger().info("Medieval " + getPluginMeta().getVersion() + " enabled on " + platform.serverVersion());
         getLogger().info("Settings: " + settings.summary());
+        getLogger().info("Deathban " + (deathbanPolicy.isEnabled() ? "on" : "off") + " for "
+                + TimeFormat.humanize(deathbanPolicy.duration()) + " (" + deathbanPolicy.source() + ")");
         dimensions.snapshot().forEach((dimension, open) -> getLogger().info("Dimension " + dimension.id()
                 + ": " + (open ? "open" : "closed")));
         getLogger().info("Loaded " + core.services().size() + " core service(s), "
                 + identities.knownProfiles() + " stored player profile(s)");
+        MedievalSettings.Land.Search searchLimits = settings.land().search();
+        getLogger().info("Block search " + (searchLimits.enabled()
+                ? "enabled: up to " + searchLimits.maxRadiusBlocks() + " blocks, "
+                        + searchLimits.chunksPerTick() + " chunk(s) per tick, "
+                        + TimeFormat.humanize(searchLimits.maxDuration()) + " per search"
+                : "disabled"));
 
         OwnerGate owner = OwnerGate.of(settings.admin().secretOwner());
         if (owner.isConfigured()) {
@@ -196,6 +236,9 @@ public final class MedievalPlugin extends JavaPlugin {
         // Gates nobody has changed at runtime follow the new configuration; ones that were opened or
         // closed keep the stored decision.
         dimensions.applyConfigDefaults();
+        // Same rule for the deathban: a value an administrator set at runtime keeps the stored
+        // decision, and a value nobody has touched follows the edited file again.
+        deathbanPolicy.applyConfigDefaults();
         return settings;
     }
 

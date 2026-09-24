@@ -28,14 +28,17 @@ import java.util.Objects;
  *
  * <h2>Threads</h2>
  * Inventory events are delivered on the tick thread, and everything here - rendering, giving items,
- * dropping leftovers - touches live server state, so none of it is moved off that thread.
+ * dropping leftovers, opening the search prompt - touches live server state, so none of it is moved
+ * off that thread.
  */
 public final class CatalogueListener implements Listener {
 
     private final MessageRenderer renderer;
+    private final CatalogueSearch search;
 
-    public CatalogueListener(MessageRenderer renderer) {
+    public CatalogueListener(MessageRenderer renderer, CatalogueSearch search) {
         this.renderer = Objects.requireNonNull(renderer, "renderer");
+        this.search = Objects.requireNonNull(search, "search");
     }
 
     @EventHandler
@@ -59,6 +62,20 @@ public final class CatalogueListener implements Listener {
 
         int slot = event.getRawSlot();
         if (menu.selectTab(slot)) {
+            return;
+        }
+        // The search row. Asking for a query is the one button that closes the menu: the answer is
+        // typed into chat, because the sign editor and anvil renaming a Java player could use are
+        // exactly the screens Geyser does not carry to Bedrock.
+        if (slot == CatalogueMenu.SLOT_SEARCH) {
+            search.prompt(player, menu);
+            return;
+        }
+        if (slot == CatalogueMenu.SLOT_CLEAR_SEARCH) {
+            // False while the button is the dimmed "nothing to clear" cell, which is inert by design.
+            if (menu.clearSearch()) {
+                renderer.send(player, "catalogue-search-cleared", true);
+            }
             return;
         }
         if (menu.navigate(slot, player)) {

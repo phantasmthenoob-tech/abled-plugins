@@ -39,3 +39,9 @@ permissions:
   medieval.command.dimension:
     description: Allows opening, closing and inspecting the Nether and End gates.
     default: op
+  # Player-facing, and safe to hand out: one search per player, bounded work per tick, and a ceiling
+  # on both the distance and the time a search may use. Negate it, or set land.search.enabled to
+  # false in config.yml, to take the command away entirely.
+  medieval.command.land:
+    description: Allows finding the closest block of a kind with /land.
+    default: true

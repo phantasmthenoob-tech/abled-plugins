@@ -20,6 +20,9 @@ import java.time.Duration;
  *   <li>{@link #runAsyncRepeating(Runnable, Duration, Duration)} schedules background housekeeping.
  *       Repeating tasks are cancelled by {@link #cancelRepeating()}, which the platform calls
  *       before it closes storage during shutdown so no task can race the shutdown.</li>
+ *   <li>{@link #runSyncRepeating(Runnable, Duration, Duration)} schedules work that has to happen on
+ *       the tick thread every tick or every few ticks - driving an incremental search, for example.
+ *       It is cancelled by the same {@link #cancelRepeating()}.</li>
  * </ul>
  */
 public interface MedievalScheduler {
@@ -36,6 +39,16 @@ public interface MedievalScheduler {
     /** Runs the task repeatedly, off the tick thread. */
     void runAsyncRepeating(Runnable task, Duration initialDelay, Duration period);
 
-    /** Cancels every repeating task started through this scheduler. */
+    /**
+     * Runs the task repeatedly on the tick thread.
+     *
+     * <p>For work that must be spread over ticks rather than done at once: a task that reads or
+     * changes server state in small slices, where running the whole thing would show up as a tick
+     * spike. The task must be small enough to finish well inside its period - the scheduler runs it
+     * whatever state the server is in, and a slow one delays the tick it was meant to fit into.
+     */
+    void runSyncRepeating(Runnable task, Duration initialDelay, Duration period);
+
+    /** Cancels every repeating task started through this scheduler, synchronous or not. */
     void cancelRepeating();
 }

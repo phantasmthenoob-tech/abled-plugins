@@ -52,9 +52,10 @@ minecraft/
 │   └── config/ message/ util/ service/ event/
 └── medieval-paper/   Platform adapter. The only module that imports Bukkit.
     ├── compat/       version/platform compatibility layer (PaperScheduler today)
+    ├── catalogue/    owner item catalogue: registry index, paged chest menu, chat search
     ├── storage/      SQLite bootstrap: URL, driver, pragmas, repositories
-    ├── listener/     LoginGateListener, DeathbanListener
-    ├── command/      /medieval command tree
+    ├── listener/     login gate, deathban, dimension gate, catalogue chat capture
+    ├── command/      /medieval command tree, /nether, /end
     └── config/ message/ capability/
 ```
 
@@ -129,7 +130,8 @@ One plugin artifact serves all of them. Players install nothing.
 
 Both are validated on load. An invalid value is reported in the console with its path and falls
 back to the documented default instead of crashing startup. `/medieval reload` re-reads both, and
-the deathban duration is read through the settings snapshot, so a reload takes effect immediately.
+the deathban rules are read through the live policy rather than cached, so a reload takes effect
+immediately.
 
 **Both files are layered over the copies bundled in the jar.** Bukkit writes a bundled resource only
 when the file is absent and never merges new keys into a file that already exists, so on a server
@@ -149,6 +151,17 @@ first `/nether open` or `/end close` records the decision in the database, and f
 stored value wins so an event that opened a dimension is not undone by the next restart. A gate
 nobody has touched keeps following `config.yml`, so editing the file and running `/medieval reload`
 still works until it is overridden.
+
+`deathban.enabled` and `deathban.duration-seconds` are **defaults too**, with the same rule as the
+gates: `/medieval deathban on|off|toggle` and `/medieval deathban duration <time>` record the
+decision in the database, so a switch flipped for an event is not undone by the next restart, and
+`/medieval deathban reset` hands both values back to the file. The two are tracked separately -
+setting a duration does not freeze the toggle. `/medieval deathban status` prints what is in force
+and which of the two it came from, and `/medieval info` shows the same thing.
+
+A duration change only affects bans written from then on: an existing ban stores an absolute expiry,
+so shortening the rule never silently releases someone who is already serving it. Use
+`/medieval deathban clear <player>` for that.
 
 `admin.secret-owner` names the one player allowed to use the hidden `/medieval statuscheck`
 catalogue. It accepts a player name (case-insensitive) or a UUID, and it is **not** a permission -
@@ -172,17 +185,24 @@ or looked up.
 row 1  (slots  0- 8)  category tabs: Everything, Building Blocks, Redstone, Tools & Utilities,
                       Combat, Food & Drinks, Ingredients, Spawn Eggs, Admin & Technical
 rows 2-5 (slots 9-44) up to 36 items of the current page
-row 6  (slots 45-53) previous, take amount, page number, next, close
+row 6  (slots 45-53) previous | search | take amount | clear search | page | next | close
+                      (the two glass panes are decoration, and carry no label)
 ```
 
 | Action | Result |
 | --- | --- |
 | Click an item | Takes the amount selected by the **Take amount** button (1, 8, 16, 32, 64) |
-| Right-click an item | Takes a full stack |
-| Shift-click an item | Takes a full stack |
+| Right-click or shift-click an item | Takes a full stack |
 | Take amount button | Cycles 1 → 8 → 16 → 32 → 64 |
 | Click a tab | Switches category, back to page 1 |
+| Click the search button | Closes the menu and asks in chat what to search for |
+| Type a query | Shows every matching item, from every tab |
+| Click clear search | Leaves the search and browses the tabs again |
 | Close button | Closes the menu |
+
+Both page buttons are drawn on every page; the one that cannot be used is dimmed and inert rather
+than blank, so the row never changes shape. That is also where "Missing message" used to appear:
+a key the file did not define still renders as a button, just a red one.
 
 Every element carries hover text explaining what it does - the buttons, the tabs, and each item
 ("click to take 1, right-click or shift-click for a full stack"). That text lives in `messages.yml`,
@@ -198,6 +218,13 @@ Details that matter in practice:
   Geyser cannot: every Bedrock tap arrives as a left-click. A tap therefore takes the selected
   amount, and the Take amount button is how a touch player takes stacks - shift-click is not
   reachable on touch. See the Geyser constraint below.
+- **Search is typed into chat.** The sign editor and anvil renaming a Java player could use are
+  exactly the screens Geyser does not carry across, so the search button closes the menu and asks in
+  chat, and the next line is captured before it broadcasts (`cancel` abandons it). Only a player with
+  a prompt outstanding is affected - ordinary chat is never inspected - and an unanswered prompt
+  expires after 45 seconds rather than eating a line sent minutes later. A query always runs over
+  **Everything** rather than the open tab, because a search that came back empty only for having the
+  wrong tab open would look broken.
 - **Nothing moves by vanilla rules.** Every click and drag in the menu is cancelled and then
   interpreted, so a catalogue button can never be picked up onto the cursor, hotbar-swapped, or
   dropped with Q; items arrive only through the take path, which decides the amount itself.
@@ -237,6 +264,8 @@ migrations of the phases that implement them, so the schema never advertises dat
 | Deathban check + profile write on login | asynchronous pre-login thread | Keeps a login off the tick thread; the decision is taken before the player joins |
 | Deathban write on death | tick thread | One single-row statement; it must be committed before the player respawns, and the storage layer serialises access |
 | `/medieval deathban ...` | database work asynchronous, messages handed back with `runSync` | Admin commands never block the tick thread on disk, and never touch Bukkit state off it |
+| `/medieval deathban status` | tick thread | Answered from the live policy's fields, so it needs no storage round trip |
+| Catalogue search answer | captured on the asynchronous chat thread, menu reopened on `runSync` | A chat event never carries inventory work |
 | Dimension gate read (portal travel) | tick thread | Served from an immutable in-memory snapshot, so a portal never waits on disk |
 | Dimension gate change (`/nether`, `/end`) | database write asynchronous, reply + evacuation on `runSync` | Same contract as the admin commands above |
 | Expired-ban purge | asynchronous repeating task | Housekeeping, cancelled before storage closes |
@@ -253,6 +282,10 @@ migrations of the phases that implement them, so the schema never advertises dat
 | `/medieval deathban set <player> <duration>` | `medieval.command.deathban` | implemented |
 | `/medieval deathban clear <player>` | `medieval.command.deathban` | implemented |
 | `/medieval deathban list` | `medieval.command.deathban` | implemented |
+| `/medieval deathban on|off|toggle` | `medieval.command.deathban` | implemented |
+| `/medieval deathban duration <duration>` | `medieval.command.deathban` | implemented |
+| `/medieval deathban status` | `medieval.command.deathban` | implemented |
+| `/medieval deathban reset` | `medieval.command.deathban` | implemented |
 | `/nether open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/end open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/medieval statuscheck` | **owner only** - `admin.secret-owner`, no permission node | implemented |
@@ -292,13 +325,22 @@ Honest status — nothing below is represented by an interface without an implem
   asynchronous pre-login gate reads the ban and refuses the login with the remaining time; expired
   rows are released on sight and swept in the background; `/medieval deathban check|set|clear|list`
   provides the administrative interface behind `medieval.command.deathban`.
+- **The deathban rule is customizable at runtime**: `on`, `off`, `toggle`, `duration <time>`,
+  `status` and `reset`, persisted through `DeathbanPolicy` in `world_state` so a change survives a
+  restart while an untouched value keeps following `config.yml` - the same layering the gates use.
+  The policy is unit-tested against a real SQLite file, including reopen, malformed stored values,
+  reset, and a reload that must keep an override while adopting an edited file.
 - **Dimension gating, wired end to end**: `/nether` and `/end` each take `open`, `close` and
   `status`; the decision is persisted in `world_state` and therefore survives a restart, a gate with
   no stored row follows `config.yml`, and the decision is published on the event bus as
   `DimensionAccessChanged` so events, GUIs and announcements react instead of being wired in.
 - **Owner catalogue, wired end to end**: `/medieval statuscheck` opens a paged, tabbed chest GUI of
-  every item in the server's registry and hands items out; the gate is a name/UUID check
-  (`OwnerGate`) rather than a permission, so other operators cannot use it.
+  every item in the server's registry, hands items out, and searches it from a chat prompt; the gate
+  is a name/UUID check (`OwnerGate`) rather than a permission, so other operators cannot use it.
+- **Message keys are checked by the build**: `MessageCatalogueTest` scans the platform sources for
+  every message key they ask for and fails, naming them, if `messages.yml` does not define one. A
+  missing key is not a crash - it renders as `Missing message: <key>` in place of a button's name -
+  so without this test the only detector was somebody opening the menu.
 - Startup/shutdown lifecycle: storage opens before services, and the plugin disables itself if the
   database cannot be opened instead of running without persistence.
 - Command surface above, capability detection and startup logging.

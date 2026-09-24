@@ -72,6 +72,23 @@ public final class PaperScheduler implements MedievalScheduler {
     }
 
     @Override
+    public void runSyncRepeating(Runnable task, Duration initialDelay, Duration period) {
+        Objects.requireNonNull(task, "task");
+        try {
+            // Registered in the same list as the asynchronous repeats so that one shutdown path cancels
+            // both: a task still waiting for its next tick while storage is being closed is exactly the
+            // race cancelRepeating exists to prevent.
+            BukkitTask scheduled = Bukkit.getScheduler().runTaskTimer(
+                    plugin, guard(task, "repeating tick task"), toTicks(initialDelay), toTicks(period));
+            synchronized (repeating) {
+                repeating.add(scheduled);
+            }
+        } catch (RuntimeException failure) {
+            report("Could not schedule a repeating tick task", failure);
+        }
+    }
+
+    @Override
     public void cancelRepeating() {
         List<BukkitTask> scheduled;
         synchronized (repeating) {

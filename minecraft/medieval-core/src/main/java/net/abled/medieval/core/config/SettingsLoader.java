@@ -48,9 +48,32 @@ public final class SettingsLoader {
                 nonNegativeInt(source, warnings, "territory.max-claims-per-kingdom", DEFAULT_MAX_CLAIMS_PER_KINGDOM),
                 source.getBoolean("territory.protect-claims", true));
 
+        MedievalSettings.Land land = new MedievalSettings.Land(search(source, warnings));
+
         MedievalSettings.Admin admin = new MedievalSettings.Admin(secretOwner(source, warnings));
 
-        return new MedievalSettings(deathban, dimensions, siege, territory, admin);
+        return new MedievalSettings(deathban, dimensions, siege, territory, land, admin);
+    }
+
+    /**
+     * The closest-block search limits.
+     *
+     * <p>{@code chunks-per-tick} is clamped rather than defaulted: an owner raising it for a faster
+     * search should get the highest value the plugin will honour, not quietly get the default back and
+     * wonder why nothing changed. The other two keep the ordinary "reject and fall back" treatment,
+     * because there is no sensible nearest value to clamp them to.
+     */
+    private static MedievalSettings.Land.Search search(SettingsSource source, Consumer<String> warnings) {
+        String path = "land.search";
+        MedievalSettings.Land.Search defaults = MedievalSettings.Land.Search.defaults();
+
+        return new MedievalSettings.Land.Search(
+                source.getBoolean(path + ".enabled", defaults.enabled()),
+                positiveInt(source, warnings, path + ".max-radius", defaults.maxRadiusBlocks()),
+                boundedInt(source, warnings, path + ".chunks-per-tick", defaults.chunksPerTick(),
+                        MedievalSettings.Land.Search.MAX_CHUNKS_PER_TICK),
+                Duration.ofSeconds(positiveLong(source, warnings, path + ".max-seconds",
+                        defaults.maxDuration().toSeconds())));
     }
 
     /**
@@ -89,6 +112,16 @@ public final class SettingsLoader {
         if (value < 0) {
             warnings.accept(path + " must not be negative but was " + value + "; using " + fallback);
             return fallback;
+        }
+        return value;
+    }
+
+    private static int boundedInt(SettingsSource source, Consumer<String> warnings, String path,
+                                  int fallback, int maximum) {
+        int value = positiveInt(source, warnings, path, fallback);
+        if (value > maximum) {
+            warnings.accept(path + " must not exceed " + maximum + " but was " + value + "; using " + maximum);
+            return maximum;
         }
         return value;
     }

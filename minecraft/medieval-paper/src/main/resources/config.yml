@@ -4,10 +4,21 @@
 # console and fall back to the default documented next to them. Gameplay code never hardcodes
 # these numbers.
 
+# Defaults for the deathban. Both values can be changed while the server runs:
+#
+#   /medieval deathban on|off|toggle        - switch the feature itself
+#   /medieval deathban duration <time>      - how long a new banishment lasts (for example 30m, 6h)
+#   /medieval deathban status               - show what is in force, and where it came from
+#   /medieval deathban reset                - drop the overrides and follow this file again
+#
+# A change made at runtime is recorded in the database and takes priority over this file from then
+# on, so a switch flipped during an event is not undone by the next restart. A value nobody has
+# changed keeps following this file, including through /medieval reload.
 deathban:
   enabled: true
   # Duration of the death ban in seconds (3600 = one hour).
-  # Stored as an absolute expiry timestamp, so it survives server restarts.
+  # A ban is stored as an absolute expiry timestamp, so it survives server restarts and keeps the
+  # length it was given even if this value is changed later.
   duration-seconds: 3600
 
 # Both dimensions ship closed. They can be opened for events by an administrator; the runtime
@@ -35,6 +46,34 @@ territory:
   # When true, unauthorised players cannot modify blocks inside another kingdom's claims.
   # Siege exceptions and administrative overrides are applied by the siege system itself.
   protect-claims: true
+
+# /land search: find the closest block of a given kind, following the world outwards until one
+# turns up. Nothing here is a permission for that command - see the permission node
+# medieval.command.land for who may use it.
+land:
+  search:
+    enabled: true
+
+    # The hard ceiling on how far one search may look, in blocks. There is no "unlimited": a block
+    # that is not in this world would keep a search running forever, so the honest answer is a
+    # ceiling nobody reaches in normal play rather than the absence of one.
+    #
+    # Reaching it is reported, not hidden - the player is told how far the search got and how many
+    # chunks it read. Raise it for a bigger world; each 16 blocks is one ring of chunks, and rings
+    # grow by eight chunks each.
+    max-radius: 10000
+
+    # Chunks one tick may read or load, and therefore how many may be in flight at once. This is what
+    # keeps a search from costing the server a lag spike: four chunks per tick is roughly the point
+    # where a search is still quick to answer but invisible in the tick times.
+    #
+    # One tick also considers up to sixteen times this many chunks without reading them, because
+    # most of a map has never been generated and checking that is nearly free. Capped at 64.
+    chunks-per-tick: 4
+
+    # How long one search may run before it gives up, in seconds. This is the limit that ends a search
+    # in practice: the radius ceiling exists for the case where a world is fully generated.
+    max-seconds: 600
 
 # Hidden owner tools. Nothing here is a permission: the command stays invisible to everyone
 # except the player named below, whether or not they are an operator.

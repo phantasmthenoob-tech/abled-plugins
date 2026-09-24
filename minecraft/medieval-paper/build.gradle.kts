@@ -12,6 +12,12 @@ dependencies {
     // implementation: the core/api classes are bundled into the plugin jar below.
     implementation(project(":medieval-core"))
     compileOnly(libs.paper.api)
+
+    // The tests here check the module's own resources against its own sources, so they need no
+    // server and no Bukkit: paper-api stays compileOnly and is never on the test classpath.
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -24,6 +30,10 @@ tasks.processResources {
     filesMatching("plugin.yml") {
         expand(tokens)
     }
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 tasks.jar {

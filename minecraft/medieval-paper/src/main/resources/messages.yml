@@ -62,6 +62,22 @@ dimension-entry-denied: "<red>{dimension} is sealed. Only an event can open it."
 dimension-evacuated: "<yellow>{dimension} was sealed, so you were returned to the overworld."
 
 # ---------------------------------------------------------------------------
+# Deathban (administrative: the live rule itself)
+# ---------------------------------------------------------------------------
+# These change the rule rather than one player's banishment. A change is recorded in the database,
+# so it survives a restart and takes priority over config.yml until /medieval deathban reset.
+
+deathban-status-on: "<gray>Deathban:</gray> <green>on</green> <dark_gray>({duration}, {source})</dark_gray>"
+deathban-status-off: "<gray>Deathban:</gray> <red>off</red> <dark_gray>({source})</dark_gray>"
+deathban-enabled: "<green>Deathban is on</green> <gray>- new deaths are banished for</gray> <white>{duration}</white><gray>.</gray>"
+deathban-disabled: "<red>Deathban is off</red> <gray>- deaths are no longer banished; stored bans stop being enforced.</gray>"
+deathban-toggle-unchanged: "<gray>Deathban is already <white>{state}</white>.</gray>"
+deathban-duration-set: "<green>Banishments now last <white>{duration}</white></green><gray>. Bans already served keep the expiry they were given.</gray>"
+deathban-duration-unchanged: "<gray>Banishments already last <white>{duration}</white>.</gray>"
+deathban-reset: "<green>Deathban follows config.yml again:</green> <white>{state}</white> <gray>for</gray> <white>{duration}</white><gray>.</gray>"
+deathban-reset-none: "<gray>Deathban already follows config.yml; nothing was overridden.</gray>"
+
+# ---------------------------------------------------------------------------
 # Owner catalogue (/medieval statuscheck - owner only, see config.yml admin.secret-owner)
 # ---------------------------------------------------------------------------
 
@@ -74,10 +90,21 @@ catalogue-hint: "<gray>Tap or click an item to take <white>{amount}</white><gray
 catalogue-tab: "<gray>{category}"
 catalogue-tab-selected: "<yellow>▶ <white>{category}"
 catalogue-empty: "<gray>Nothing in this tab."
+# Shown in place of the empty-tab item while a search is open. {query} is what was typed, before
+# normalisation, so it reads back the way it was written.
+catalogue-search-nothing: "<gray>Nothing matches <white>{query}</white>."
 catalogue-previous: "<yellow>« Previous page"
 catalogue-next: "<yellow>Next page »"
+# The same two buttons on the first and last page: dimmed and inert rather than missing, so the row
+# never changes shape between page one and the last page.
+catalogue-no-previous: "<dark_gray>« Previous page"
+catalogue-no-next: "<dark_gray>Next page »"
 catalogue-page: "<gray>Page <white>{page}</white><gray>/</gray><white>{pages}</white> <dark_gray>({entries} items)"
 catalogue-amount: "<aqua>Take amount <dark_gray>»</dark_gray> <white>{amount}"
+catalogue-search: "<yellow>Search"
+catalogue-search-active: "<yellow>Searching <white>{query}</white> <dark_gray>({entries} matches)</dark_gray>"
+catalogue-search-clear: "<red>Clear search"
+catalogue-search-idle: "<dark_gray>Search"
 catalogue-close: "<red>Close"
 
 # Hover text. A multi-line value is allowed here: each line in the file becomes one lore line.
@@ -86,12 +113,56 @@ catalogue-item-lore: |-
   <gray>Right-click or shift-click for a full stack
 catalogue-tab-lore: "<gray>Show <white>{category}</white>."
 catalogue-empty-lore: "<gray>This tab has no items."
+catalogue-search-nothing-lore: |-
+  <gray>No item id matches <white>{query}</white>.
+  <gray>Try a shorter word, or a different spelling.
 catalogue-previous-lore: "<gray>Back one page."
+catalogue-no-previous-lore: "<gray>This is the first page."
 catalogue-next-lore: "<gray>Forward one page."
+catalogue-no-next-lore: "<gray>This is the last page."
 catalogue-page-lore: "<gray>{entries} item(s) in this tab."
 catalogue-amount-lore: |-
   <gray>How many items one click takes.
   <gray>Cycles 1, 8, 16, 32, 64.
+catalogue-search-lore: "<gray>Type what to search for in chat."
+catalogue-search-active-lore: |-
+  <gray>Click to search for something else.
+  <gray>Click <white>Clear search</white> to browse the tabs again.
+catalogue-search-clear-lore: "<gray>Leave the search and browse the tabs again."
+catalogue-search-idle-lore: "<gray>There is no search to clear."
 catalogue-close-lore: "<gray>Leave the catalogue."
 # Sent when a take could not all fit in the player's inventory and the rest was dropped.
 catalogue-overflow: "<yellow>Your inventory is full, so the rest of the {item} dropped at your feet."
+
+# ---------------------------------------------------------------------------
+# Catalogue search (the answer is typed into chat - see the Geyser note above the GUI)
+# ---------------------------------------------------------------------------
+
+# Sent after the menu is closed, so the click rules are explained without item lore (which Geyser
+# does not render the same way on Bedrock). {timeout} is how long the prompt waits, {cancel} is the
+# word that abandons it.
+catalogue-search-prompt: "<yellow>Type what to search for in chat, or <white>{cancel}</white> to stop. You have <white>{timeout}</white>."
+# The prompt timed out and the line was treated as ordinary chat after all.
+catalogue-search-expired: "<gray>That search expired, so your message was sent as normal chat."
+catalogue-search-cancelled: "<gray>Search cancelled."
+# The answer had nothing left to match on once punctuation and separators were normalised away.
+catalogue-search-blank: "<gray>There was nothing to search for, so the catalogue is unchanged."
+catalogue-search-found: "<green>Found <white>{count}</white> match(es) for <white>{query}</white>.</green>"
+catalogue-search-cleared: "<gray>Search cleared; browsing the tabs again."
+
+# ---------------------------------------------------------------------------
+# Block search (/land search - player-facing, see config.yml land.search)
+# ---------------------------------------------------------------------------
+
+land-help: "<gray>Usage: <white>/land search <block> [radius]</white>, <white>/land status</white>, <white>/land cancel</white>."
+land-search-disabled: "<red>Block search is switched off on this server."
+land-search-invalid-block: "<red>Cannot search for <white>{input}</white>. Use a block id, for example <white>diamond_ore</white>."
+land-search-started: "<green>Searching for the closest <white>{block}</white></green> <gray>- up to <white>{radius}</white> blocks out. You will be told when it is found; <white>/land status</white> shows progress.</gray>"
+land-search-already-running: "<gray>You already have a search running: <white>{chunks}</white> chunk(s) read, <white>{radius}</white> of <white>{limit}</white> blocks out. Use <white>/land cancel</white> to stop it.</gray>"
+land-search-progress: "<gray>Searching for <white>{block}</white>: <white>{chunks}</white> chunk(s) read, <white>{skipped}</white> not generated, <white>{radius}</white> of <white>{limit}</white> blocks out, <white>{elapsed}</white> elapsed.</gray>"
+land-search-found: "<green>Closest <white>{block}</white> is at <white>{x}, {y}, {z}</white></green> <gray>- <white>{distance}</white> block(s) away, <white>{chunks}</white> chunk(s) read in <white>{elapsed}</white>.</gray>"
+land-search-not-found: "<yellow>No <white>{block}</white> within {limit} blocks.</yellow> <gray>{chunks} chunk(s) read, {skipped} not generated, in {elapsed}.</gray>"
+land-search-timed-out: "<yellow>Gave up after {elapsed} without finding <white>{block}</white></yellow> <gray>({radius} of {limit} blocks covered, {chunks} chunk(s) read, {skipped} not generated).</gray>"
+land-search-stopped-early: "<yellow>Gave up after {elapsed}. The nearest <white>{block}</white> so far is at <white>{x}, {y}, {z}</white></yellow> <gray>- {distance} block(s) away, but the search did not finish, so a closer one may exist.</gray>"
+land-search-cancelled: "<gray>Search stopped after <white>{chunks}</white> chunk(s) read and <white>{elapsed}</white>."
+land-search-nothing-running: "<gray>You have no search running. Start one with <white>/land search <block></white>."

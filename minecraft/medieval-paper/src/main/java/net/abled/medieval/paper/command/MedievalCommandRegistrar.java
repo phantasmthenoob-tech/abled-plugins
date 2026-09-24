@@ -6,6 +6,7 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.config.MedievalSettings;
+import net.abled.medieval.core.deathban.DeathbanPolicy;
 import net.abled.medieval.core.util.TimeFormat;
 import net.abled.medieval.core.world.Dimension;
 import net.abled.medieval.core.world.DimensionAccessService;
@@ -42,16 +43,18 @@ public final class MedievalCommandRegistrar {
     private final DeathbanCommands deathbanCommands;
     private final DimensionCommands dimensionCommands;
     private final CatalogueCommand catalogueCommands;
+    private final LandCommands landCommands;
 
     public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
                                     DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands,
-                                    CatalogueCommand catalogueCommands) {
+                                    CatalogueCommand catalogueCommands, LandCommands landCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.deathbanCommands = Objects.requireNonNull(deathbanCommands, "deathbanCommands");
         this.dimensionCommands = Objects.requireNonNull(dimensionCommands, "dimensionCommands");
         this.catalogueCommands = Objects.requireNonNull(catalogueCommands, "catalogueCommands");
+        this.landCommands = Objects.requireNonNull(landCommands, "landCommands");
     }
 
     public void register() {
@@ -81,6 +84,11 @@ public final class MedievalCommandRegistrar {
                         "Open, close or inspect " + dimension.displayName(),
                         List.of());
             }
+
+            // Player-facing rather than administrative, so it stands on its own rather than under
+            // /medieval. Toggle it with land.search.enabled or the permission node.
+            commands.register(landCommands.node(),
+                    "Find the closest block of a kind", List.of());
         });
     }
 
@@ -109,6 +117,18 @@ public final class MedievalCommandRegistrar {
             renderer.send(sender, "help-line",
                     Map.of("command", "medieval deathban list",
                             "description", "List every active banishment"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban on|off|toggle",
+                            "description", "Turn the deathban on or off at runtime"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban duration <duration>",
+                            "description", "Set how long a banishment lasts"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban status",
+                            "description", "Show the live deathban rules"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban reset",
+                            "description", "Drop the overrides and follow config.yml again"), false);
         }
         if (sender.hasPermission(DimensionCommands.PERMISSION)) {
             renderer.send(sender, "help-line",
@@ -117,6 +137,11 @@ public final class MedievalCommandRegistrar {
             renderer.send(sender, "help-line",
                     Map.of("command", "end open|close|status",
                             "description", "Open or seal the End"), false);
+        }
+        if (sender.hasPermission(LandCommands.PERMISSION)) {
+            renderer.send(sender, "help-line",
+                    Map.of("command", "land search <block> [radius]",
+                            "description", "Find the closest block of that kind"), false);
         }
         // Only the configured owner sees this line, so /medieval help does not advertise the
         // catalogue to anybody else either.
@@ -133,9 +158,14 @@ public final class MedievalCommandRegistrar {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("server", core.platform().serverVersion());
         values.put("services", Integer.toString(core.services().size()));
-        values.put("deathban", settings.deathban().enabled()
-                ? TimeFormat.humanize(settings.deathban().duration())
-                : "disabled");
+        // The live rules, not config.yml: the toggle and the duration can both be changed at
+        // runtime, and an administrator reading /medieval info needs what is actually in force.
+        DeathbanPolicy policy = core.services().find(DeathbanPolicy.class).orElse(null);
+        values.put("deathban", policy == null
+                ? "unknown"
+                : policy.isEnabled()
+                        ? TimeFormat.humanize(policy.duration()) + " (" + policy.source() + ")"
+                        : "disabled (" + policy.source() + ")");
         // The live gate state, not config.yml: a gate can be opened or closed at runtime, and an
         // administrator reading /medieval info needs to see what is actually true right now.
         DimensionAccessService gate = core.services().find(DimensionAccessService.class).orElse(null);
