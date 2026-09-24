@@ -7,6 +7,22 @@ author: abled-plugins
 website: https://github.com/phantasmthenoob-tech/abled-plugins
 load: POSTWORLD
 
+# Loaded after these when they are present, so Bedrock detection and protocol translation are
+# already running when our listeners register. None of them is required: the plugin starts on a
+# plain Paper server with no Bedrock support.
+softdepend:
+  - Geyser-Spigot
+  - floodgate
+  - ViaVersion
+  - ViaBackwards
+
+# The SQLite JDBC driver is downloaded by the server from Maven Central and added to this plugin's
+# classpath at startup (Paper's 'libraries' mechanism). Downloading it instead of shading it keeps
+# the jar small and leaves the driver's native library untouched, and it means the repository never
+# commits a third-party binary.
+libraries:
+  - org.xerial:sqlite-jdbc:3.53.4.0
+
 # Commands are registered at runtime through the Brigadier command API instead of being
 # declared here, so command registration lives in one place and private administrative
 # branches never appear in command listings or tab completion for ordinary players.
@@ -16,4 +32,7 @@ permissions:
     default: true
   medieval.command.reload:
     description: Allows reloading Medieval messages and configuration.
+    default: op
+  medieval.command.deathban:
+    description: Allows checking, setting, clearing and listing deathbans.
     default: op

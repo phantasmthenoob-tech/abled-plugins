@@ -14,6 +14,11 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Persistence tests run against real temporary SQLite databases. Test scope only: the server
+    // supplies the driver at runtime through the plugin's 'libraries:' entry, so it is never
+    // bundled into the plugin jar.
+    testImplementation(libs.sqlite.jdbc)
 }
 
 tasks.withType<JavaCompile>().configureEach {

@@ -3,9 +3,13 @@
 # Paper 26.2 and 26.3 both require Java 25; 1.21.11 is end-of-life upstream.
 paperApi = "26.2.build.129-stable"
 junit = "5.14.4"
+# Supplied to the running server through plugin.yml 'libraries:' and to tests as a
+# test-only dependency, so it is never bundled into the plugin jar.
+sqliteJdbc = "3.53.4.0"
 
 [libraries]
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paperApi" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }

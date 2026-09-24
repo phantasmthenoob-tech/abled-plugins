@@ -2,6 +2,9 @@
 #
 # Formatting uses MiniMessage. Placeholders use {braces} and are substituted by the core
 # message service, so a template can be edited without recompiling anything.
+#
+# A missing key is reported in-game as "Missing message: <key>" rather than failing a command,
+# which makes a broken template obvious during play.
 
 prefix: "<gold>[Medieval]</gold> "
 
@@ -14,6 +17,30 @@ help-line: " <yellow>/{command}</yellow> <dark_gray>-</dark_gray> <gray>{descrip
 
 info-line: " <gray>{key}:</gray> <white>{value}</white>"
 
-# Used once the deathban subsystem is wired into player events (persistence phase).
+# ---------------------------------------------------------------------------
+# Deathban (player-facing)
+# ---------------------------------------------------------------------------
+
+# Sent when a player dies, right before they are disconnected. The ban is already stored at this
+# point; reconnecting is refused by the login gate until {remaining} has passed.
 deathban-kick: "<red>You were banished in battle. Return in <white>{remaining}</white>."
+# Sent at login while a stored ban is still in effect.
 deathban-join-denied: "<red>You are still banished for another <white>{remaining}</white>."
+# Sent when the database cannot be read, so the login is refused instead of letting a banned
+# player in. This is a server-side problem: check the console for the storage error.
+storage-unavailable: "<red>The server could not check your record. Try again shortly."
+
+# ---------------------------------------------------------------------------
+# Deathban (administrative: /medieval deathban ...)
+# ---------------------------------------------------------------------------
+
+deathban-not-banned: "<white>{player}</white> <gray>is not banished.</gray>"
+deathban-check-banned: "<white>{player}</white> <gray>is banished for another</gray> <red>{remaining}</red> <dark_gray>({source})</dark_gray>"
+deathban-set: "<white>{player}</white> <gray>is banished for</gray> <red>{duration}</red><gray>.</gray>"
+deathban-cleared: "<white>{player}</white> <gray>is no longer banished.</gray>"
+deathban-clear-none: "<white>{player}</white> <gray>had no banishment to lift.</gray>"
+deathban-list-header: "<gold><bold>Active banishments</bold></gold> <dark_gray>»</dark_gray> <yellow>{count}"
+deathban-list-line: " <white>{player}</white> <dark_gray>({source})</dark_gray> <gray>-</gray> <red>{remaining}</red>"
+deathban-list-empty: "<gray>No active banishments.</gray>"
+deathban-invalid-duration: "<red>Invalid duration. Accepted formats: <white>{usage}</white>"
+deathban-unknown-player: "<red>No stored profile for <white>{player}</white>. They must have joined the server at least once."

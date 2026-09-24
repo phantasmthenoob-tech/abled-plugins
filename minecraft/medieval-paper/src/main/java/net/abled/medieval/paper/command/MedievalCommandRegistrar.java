@@ -6,11 +6,9 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.config.MedievalSettings;
-import net.abled.medieval.core.message.MessageService;
 import net.abled.medieval.core.util.TimeFormat;
 import net.abled.medieval.paper.MedievalPlugin;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.abled.medieval.paper.message.MessageRenderer;
 import org.bukkit.command.CommandSender;
 
 import java.util.LinkedHashMap;
@@ -23,9 +21,9 @@ import java.util.logging.Level;
  * Registers {@code /medieval} at runtime through Paper's Brigadier command API.
  *
  * <p>Commands are intentionally not listed in plugin.yml: registering them here keeps command
- * registration in one place and lets a branch exist only for senders that are allowed to see it
- * (see the private administrative branch added later). Tab completion therefore follows the
- * {@code requires} predicates rather than a static permission list.
+ * registration in one place, and a branch only exists for senders allowed to see it. Tab completion
+ * and command listings therefore follow each branch's {@code requires} predicate instead of a
+ * static permission list, so the administrative branches stay invisible to ordinary players.
  */
 public final class MedievalCommandRegistrar {
 
@@ -34,12 +32,15 @@ public final class MedievalCommandRegistrar {
 
     private final MedievalPlugin plugin;
     private final MedievalCore core;
-    private final MessageService messages;
+    private final MessageRenderer renderer;
+    private final DeathbanCommands deathbanCommands;
 
-    public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageService messages) {
+    public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
+                                    DeathbanCommands deathbanCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
-        this.messages = Objects.requireNonNull(messages, "messages");
+        this.renderer = Objects.requireNonNull(renderer, "renderer");
+        this.deathbanCommands = Objects.requireNonNull(deathbanCommands, "deathbanCommands");
     }
 
     public void register() {
@@ -54,6 +55,7 @@ public final class MedievalCommandRegistrar {
                             .then(Commands.literal("reload")
                                     .requires(source -> source.getSender().hasPermission(PERMISSION_RELOAD))
                                     .executes(context -> reload(context.getSource())))
+                            .then(deathbanCommands.node())
                             .build(),
                     "Medieval Era server commands",
                     List.of("med"));
@@ -62,14 +64,29 @@ public final class MedievalCommandRegistrar {
 
     private int help(CommandSourceStack source) {
         CommandSender sender = source.getSender();
-        send(sender, messages.raw("help-header"), false);
-        send(sender, messages.raw("help-line",
-                Map.of("command", "medieval help", "description", "Show this command list")), false);
-        send(sender, messages.raw("help-line",
-                Map.of("command", "medieval info", "description", "Show medieval system status")), false);
+        renderer.send(sender, "help-header", false);
+        renderer.send(sender, "help-line",
+                Map.of("command", "medieval help", "description", "Show this command list"), false);
+        renderer.send(sender, "help-line",
+                Map.of("command", "medieval info", "description", "Show medieval system status"), false);
         if (sender.hasPermission(PERMISSION_RELOAD)) {
-            send(sender, messages.raw("help-line",
-                    Map.of("command", "medieval reload", "description", "Reload messages and configuration")), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval reload", "description", "Reload messages and configuration"),
+                    false);
+        }
+        if (sender.hasPermission(DeathbanCommands.PERMISSION)) {
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban check <player>",
+                            "description", "Show a player's remaining ban"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban set <player> <duration>",
+                            "description", "Banish a player"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban clear <player>",
+                            "description", "Lift a player's banishment"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval deathban list",
+                            "description", "List every active banishment"), false);
         }
         return Command.SINGLE_SUCCESS;
     }
@@ -88,15 +105,15 @@ public final class MedievalCommandRegistrar {
         values.put("claims per kingdom", Integer.toString(settings.territory().maxClaimsPerKingdom()));
 
         CommandSender sender = source.getSender();
-        values.forEach((key, value) -> send(sender,
-                messages.raw("info-line", Map.of("key", key, "value", value)), false));
+        values.forEach((key, value) -> renderer.send(sender, "info-line",
+                Map.of("key", key, "value", value), false));
         return Command.SINGLE_SUCCESS;
     }
 
     private int reload(CommandSourceStack source) {
         CommandSender sender = source.getSender();
         if (!sender.hasPermission(PERMISSION_RELOAD)) {
-            send(sender, messages.noPermission(), true);
+            renderer.send(sender, "no-permission", true);
             return Command.SINGLE_SUCCESS;
         }
 
@@ -106,22 +123,14 @@ public final class MedievalCommandRegistrar {
             MedievalSettings settings = plugin.reloadSettings();
             long millis = (System.nanoTime() - startedAt) / 1_000_000L;
 
-            send(sender, messages.raw("reload-success", Map.of("millis", Long.toString(millis))), true);
+            renderer.send(sender, "reload-success", Map.of("millis", Long.toString(millis)), true);
             plugin.getLogger().info("Reloaded messages.yml and config.yml in " + millis + " ms ("
                     + settings.summary() + ")");
-            plugin.getLogger().info("Live gameplay state (kingdoms, claims, sieges, dimension toggles) is "
-                    + "re-read from storage; world generation changes still require a restart.");
         } catch (RuntimeException failure) {
-            send(sender, messages.raw("reload-failed",
-                    Map.of("reason", String.valueOf(failure.getMessage()))), true);
+            renderer.send(sender, "reload-failed",
+                    Map.of("reason", String.valueOf(failure.getMessage())), true);
             plugin.getLogger().log(Level.WARNING, "Reload failed", failure);
         }
         return Command.SINGLE_SUCCESS;
-    }
-
-    private void send(CommandSender sender, String miniMessage, boolean withPrefix) {
-        String text = withPrefix ? messages.prefix() + miniMessage : miniMessage;
-        Component rendered = MiniMessage.miniMessage().deserialize(text);
-        sender.sendMessage(rendered);
     }
 }

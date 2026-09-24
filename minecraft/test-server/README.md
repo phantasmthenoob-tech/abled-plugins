@@ -61,4 +61,10 @@ protocol translation and Bedrock inventory behaviour cannot be unit-tested:
 - [ ] Bedrock inventory interaction: GUIs open, shift-click works, no left/right click dependency
 - [ ] Bedrock disconnect/reconnect and world switching
 - [ ] Resource pack refused: gameplay still works with fallback vanilla appearances
-- [ ] Restart persistence for every subsystem that stores data
+- [ ] Deathban: die, get kicked with the remaining time, and be refused at login until it expires
+- [ ] Deathban `/medieval deathban list`, `check`, `set <player> 2m`, `clear` — and that a normal
+      player cannot see or use the `deathban` branches
+- [ ] Restart persistence for every subsystem that stores data: after a restart, a stored deathban
+      still refuses the login and its remaining time is correct (it does not restart from the top)
+- [ ] Delete `plugins/Medieval/medieval.db` and restart: the schema is recreated and the server
+      starts normally; corrupt the file and the plugin refuses to enable with a clear console error

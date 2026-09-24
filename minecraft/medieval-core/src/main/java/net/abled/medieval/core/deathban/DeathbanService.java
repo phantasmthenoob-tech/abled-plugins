@@ -6,6 +6,7 @@ import net.abled.medieval.core.config.MedievalSettings;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,6 +54,48 @@ public final class DeathbanService implements MedievalService {
         return activeBan(playerId).isPresent();
     }
 
+    /**
+     * Decides whether a player may join, and releases an expired ban on the way.
+     *
+     * <p>This is the single place that answers "may this player play?": the platform layer only
+     * renders the {@link AccessDecision}. Behaviour:
+     * <ul>
+     *   <li>no stored ban -&gt; allowed;</li>
+     *   <li>active ban and the feature is enabled -&gt; denied, carrying the remaining time;</li>
+     *   <li>active ban but the feature was switched off by an administrator -&gt; allowed, so
+     *       disabling deathban immediately lets everyone back in;</li>
+     *   <li>expired ban -&gt; the row is deleted, so it cannot linger in storage.</li>
+     * </ul>
+     *
+     * <p>Performs one point read and, only for an expired row, one delete. Both are small enough
+     * to run on the asynchronous pre-login thread, which is where the platform calls this.
+     */
+    public AccessDecision checkLogin(UUID playerId) {
+        Objects.requireNonNull(playerId, "playerId");
+        Instant now = clock.instant();
+        Optional<DeathbanEntry> stored = store.find(playerId);
+        if (stored.isEmpty()) {
+            return AccessDecision.allowed();
+        }
+
+        DeathbanEntry entry = stored.get();
+        if (entry.isActive(now)) {
+            return isEnabled() ? AccessDecision.denied(entry.remaining(now)) : AccessDecision.allowed();
+        }
+
+        store.delete(playerId);
+        return AccessDecision.allowed();
+    }
+
+    /**
+     * Stored bans that are still in effect, ordered by expiry, which is what the administrative list
+     * shows. Expired rows are not included: they are pending the next purge, not in force.
+     */
+    public List<DeathbanEntry> activeBans() {
+        Instant now = clock.instant();
+        return store.all().stream().filter(entry -> entry.isActive(now)).toList();
+    }
+
     /** Time until release, or empty when the player is not banned. */
     public Optional<Duration> remaining(UUID playerId) {
         Instant now = clock.instant();
@@ -77,21 +120,46 @@ public final class DeathbanService implements MedievalService {
         return Optional.of(entry);
     }
 
+    /**
+     * Creates a ban with an explicit duration, ignoring the configured enable flag and duration.
+     * Used by the administrative {@code set} command, which must work even when deathban is
+     * disabled for normal play.
+     */
+    public DeathbanEntry banFor(UUID playerId, Duration duration, String cause, String killer, Instant deathAt) {
+        Objects.requireNonNull(playerId, "playerId");
+        Objects.requireNonNull(duration, "duration");
+        Objects.requireNonNull(deathAt, "deathAt");
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException("ban duration must be positive: " + duration);
+        }
+
+        DeathbanEntry entry = new DeathbanEntry(playerId, deathAt, deathAt.plus(duration), cause, killer);
+        store.save(entry);
+        return entry;
+    }
+
     /** Administrative override; returns true when an entry was removed. */
     public boolean clear(UUID playerId) {
         Objects.requireNonNull(playerId, "playerId");
         return store.delete(playerId);
     }
 
+    /**
+     * Removes an already expired entry so it does not linger in storage.
+     *
+     * @return true when an expired row was removed
+     */
+    public boolean purgeIfExpired(UUID playerId) {
+        Objects.requireNonNull(playerId, "playerId");
+        Instant now = clock.instant();
+        return store.find(playerId)
+                .filter(entry -> !entry.isActive(now))
+                .map(entry -> store.delete(playerId))
+                .orElse(false);
+    }
+
     /** Removes expired entries; returns how many were purged. */
     public int purgeExpired() {
-        Instant now = clock.instant();
-        int purged = 0;
-        for (DeathbanEntry entry : store.all()) {
-            if (!entry.isActive(now) && store.delete(entry.playerId())) {
-                purged++;
-            }
-        }
-        return purged;
+        return store.deleteExpired(clock.instant());
     }
 }

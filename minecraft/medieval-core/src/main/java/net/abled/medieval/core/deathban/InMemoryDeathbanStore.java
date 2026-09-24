@@ -1,5 +1,6 @@
 package net.abled.medieval.core.deathban;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -40,5 +41,17 @@ public final class InMemoryDeathbanStore implements DeathbanStore {
     @Override
     public Collection<DeathbanEntry> all() {
         return List.copyOf(entries.values());
+    }
+
+    @Override
+    public int deleteExpired(Instant now) {
+        Objects.requireNonNull(now, "now");
+        int removed = 0;
+        for (Map.Entry<UUID, DeathbanEntry> entry : entries.entrySet()) {
+            if (!entry.getValue().isActive(now) && entries.remove(entry.getKey(), entry.getValue())) {
+                removed++;
+            }
+        }
+        return removed;
     }
 }

@@ -1,5 +1,6 @@
 package net.abled.medieval.core.deathban;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,4 +21,10 @@ public interface DeathbanStore {
     boolean delete(UUID playerId);
 
     Collection<DeathbanEntry> all();
+
+    /**
+     * Deletes bans that expired at or before {@code now} in a single operation; returns how many
+     * rows were removed. Implemented as one statement so periodic cleanup stays cheap.
+     */
+    int deleteExpired(Instant now);
 }
