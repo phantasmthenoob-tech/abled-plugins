@@ -1,0 +1,19 @@
+# Medieval Era messages.
+#
+# Formatting uses MiniMessage. Placeholders use {braces} and are substituted by the core
+# message service, so a template can be edited without recompiling anything.
+
+prefix: "<gold>[Medieval]</gold> "
+
+no-permission: "<red>You do not have permission to do that."
+reload-success: "<green>Configuration reloaded in <white>{millis} ms</white>."
+reload-failed: "<red>Reload failed: <white>{reason}</white>"
+
+help-header: "<gold><bold>Medieval Era</bold></gold> <dark_gray>»</dark_gray> <yellow>Commands"
+help-line: " <yellow>/{command}</yellow> <dark_gray>-</dark_gray> <gray>{description}</gray>"
+
+info-line: " <gray>{key}:</gray> <white>{value}</white>"
+
+# Used once the deathban subsystem is wired into player events (persistence phase).
+deathban-kick: "<red>You were banished in battle. Return in <white>{remaining}</white>."
+deathban-join-denied: "<red>You are still banished for another <white>{remaining}</white>."

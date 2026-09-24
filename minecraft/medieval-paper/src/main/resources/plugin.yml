@@ -1,0 +1,19 @@
+name: Medieval
+version: ${version}
+main: net.abled.medieval.paper.MedievalPlugin
+api-version: '26.2'
+description: Medieval Era kingdoms, warfare, sieges, resources and progression for Paper servers.
+author: abled-plugins
+website: https://github.com/phantasmthenoob-tech/abled-plugins
+load: POSTWORLD
+
+# Commands are registered at runtime through the Brigadier command API instead of being
+# declared here, so command registration lives in one place and private administrative
+# branches never appear in command listings or tab completion for ordinary players.
+permissions:
+  medieval.command.use:
+    description: Allows using the public /medieval command.
+    default: true
+  medieval.command.reload:
+    description: Allows reloading Medieval messages and configuration.
+    default: op

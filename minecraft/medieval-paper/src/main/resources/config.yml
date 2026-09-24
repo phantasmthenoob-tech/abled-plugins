@@ -1,0 +1,37 @@
+# Medieval Era configuration.
+#
+# Every value here is loaded and validated at startup; invalid values are reported in the
+# console and fall back to the default documented next to them. Gameplay code never hardcodes
+# these numbers.
+
+deathban:
+  enabled: true
+  # Duration of the death ban in seconds (3600 = one hour).
+  # Stored as an absolute expiry timestamp, so it survives server restarts.
+  duration-seconds: 3600
+
+# Both dimensions ship closed. They can be opened for events by an administrator; the runtime
+# state is persisted separately from this file so it survives restarts.
+dimensions:
+  nether:
+    enabled: false
+  end:
+    enabled: false
+
+siege:
+  enabled: true
+  ram:
+    health: 1000
+    damage: 100
+    cooldown-seconds: 4
+  catapult:
+    health: 750
+    damage: 150
+    cooldown-seconds: 6
+
+territory:
+  # Maximum number of claimed chunks a single kingdom may hold.
+  max-claims-per-kingdom: 25
+  # When true, unauthorised players cannot modify blocks inside another kingdom's claims.
+  # Siege exceptions and administrative overrides are applied by the siege system itself.
+  protect-claims: true

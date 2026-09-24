@@ -1,0 +1,12 @@
+# Operating system / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Local environment files are never committed
+.env
+.env.local
+
+# Node tooling, in case a web application is added next to the Minecraft project
+node_modules/
