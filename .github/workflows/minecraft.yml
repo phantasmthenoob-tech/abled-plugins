@@ -31,10 +31,11 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      # No build-root-directory input: setup-gradle does not accept one, and passing it made the
+      # action warn and ignore it. It caches ~/.gradle regardless; the build itself is pointed at
+      # the Minecraft build through working-directory below.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
-        with:
-          build-root-directory: minecraft
 
       - name: Make the Gradle wrapper executable
         run: chmod +x ./gradlew
