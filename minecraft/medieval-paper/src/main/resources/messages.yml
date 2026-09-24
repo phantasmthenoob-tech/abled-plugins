@@ -79,5 +79,19 @@ catalogue-next: "<yellow>Next page »"
 catalogue-page: "<gray>Page <white>{page}</white><gray>/</gray><white>{pages}</white> <dark_gray>({entries} items)"
 catalogue-amount: "<aqua>Take amount <dark_gray>»</dark_gray> <white>{amount}"
 catalogue-close: "<red>Close"
+
+# Hover text. A multi-line value is allowed here: each line in the file becomes one lore line.
+catalogue-item-lore: |-
+  <gray>Click to take <white>{amount}</white>
+  <gray>Right-click or shift-click for a full stack
+catalogue-tab-lore: "<gray>Show <white>{category}</white>."
+catalogue-empty-lore: "<gray>This tab has no items."
+catalogue-previous-lore: "<gray>Back one page."
+catalogue-next-lore: "<gray>Forward one page."
+catalogue-page-lore: "<gray>{entries} item(s) in this tab."
+catalogue-amount-lore: |-
+  <gray>How many items one click takes.
+  <gray>Cycles 1, 8, 16, 32, 64.
+catalogue-close-lore: "<gray>Leave the catalogue."
 # Sent when a take could not all fit in the player's inventory and the rest was dropped.
 catalogue-overflow: "<yellow>Your inventory is full, so the rest of the {item} dropped at your feet."

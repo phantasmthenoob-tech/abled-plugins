@@ -6,6 +6,11 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.logging.Level;
 
 /** {@link SettingsSource} backed by the plugin's {@code config.yml}. */
 public final class PaperSettingsSource implements SettingsSource {
@@ -21,13 +26,28 @@ public final class PaperSettingsSource implements SettingsSource {
     /**
      * Reads config.yml from the plugin data folder, writing the bundled defaults first when the
      * file does not exist yet. Reloading re-reads the file from disk.
+     *
+     * <p>The bundled copy is layered underneath the file, exactly as {@code messages.yml} is: a
+     * setting an update introduces then resolves to its documented default on a server whose
+     * config.yml predates it, instead of depending on a code fallback that no longer agrees with
+     * the file the owner is looking at. The owner's own value wins for every key they have.
      */
     public static PaperSettingsSource load(JavaPlugin plugin) {
         File file = new File(plugin.getDataFolder(), FILE_NAME);
         if (!file.exists()) {
             plugin.saveResource(FILE_NAME, false);
         }
-        return new PaperSettingsSource(YamlConfiguration.loadConfiguration(file));
+
+        YamlConfiguration configured = YamlConfiguration.loadConfiguration(file);
+        try (InputStream stream = plugin.getResource(FILE_NAME)) {
+            if (stream != null) {
+                configured.setDefaults(YamlConfiguration.loadConfiguration(
+                        new InputStreamReader(stream, StandardCharsets.UTF_8)));
+            }
+        } catch (IOException failure) {
+            plugin.getLogger().log(Level.WARNING, "Could not read the bundled " + FILE_NAME, failure);
+        }
+        return new PaperSettingsSource(configured);
     }
 
     @Override

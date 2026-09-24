@@ -65,6 +65,17 @@ public final class CatalogueMenu implements InventoryHolder {
     private static final String MESSAGE_TAB_SELECTED = "catalogue-tab-selected";
     private static final String MESSAGE_EMPTY = "catalogue-empty";
 
+    /** Hover text. Every visible element explains itself, since a button with only a label is a
+     *  guessing game - especially on Bedrock, where the click rules are not the Java ones. */
+    private static final String LORE_ITEM = "catalogue-item-lore";
+    private static final String LORE_TAB = "catalogue-tab-lore";
+    private static final String LORE_EMPTY = "catalogue-empty-lore";
+    private static final String LORE_PREVIOUS = "catalogue-previous-lore";
+    private static final String LORE_NEXT = "catalogue-next-lore";
+    private static final String LORE_PAGE = "catalogue-page-lore";
+    private static final String LORE_AMOUNT = "catalogue-amount-lore";
+    private static final String LORE_CLOSE = "catalogue-close-lore";
+
     private final CatalogueIndex index;
     private final MessageRenderer renderer;
     private final Inventory inventory;
@@ -194,42 +205,60 @@ public final class CatalogueMenu implements InventoryHolder {
         List<Material> entries = index.of(category);
         page = CataloguePage.of(entries.size(), CONTENT_SLOTS, page.index());
         for (int offset = 0; offset < page.size(); offset++) {
-            inventory.setItem(CONTENT_FIRST + offset,
-                    new ItemStack(entries.get(page.fromInclusive() + offset)));
+            inventory.setItem(CONTENT_FIRST + offset, entry(entries.get(page.fromInclusive() + offset)));
         }
         if (page.isEmpty()) {
             // A real item in slot one, but content() refuses it because the page reports no
             // entries, so an empty tab cannot be used to take the placeholder.
-            inventory.setItem(CONTENT_FIRST, named(icon("minecraft:barrier"), MESSAGE_EMPTY));
+            inventory.setItem(CONTENT_FIRST, button(icon("minecraft:barrier"), MESSAGE_EMPTY, Map.of(), LORE_EMPTY));
         }
 
-        inventory.setItem(SLOT_PREVIOUS, page.hasPrevious() ? named(icon("minecraft:arrow"), "catalogue-previous") : null);
-        inventory.setItem(SLOT_NEXT, page.hasNext() ? named(icon("minecraft:arrow"), "catalogue-next") : null);
-        inventory.setItem(SLOT_PAGE, named(icon("minecraft:book"), "catalogue-page", Map.of(
+        Map<String, String> pagePlaceholders = Map.of(
                 "page", Integer.toString(page.displayIndex()),
                 "pages", Integer.toString(page.pageCount()),
-                "entries", Integer.toString(entries.size()))));
-        inventory.setItem(SLOT_AMOUNT, named(icon("minecraft:gold_ingot"), "catalogue-amount",
-                Map.of("amount", Integer.toString(selectedAmount()))));
-        inventory.setItem(SLOT_CLOSE, named(icon("minecraft:barrier"), "catalogue-close"));
+                "entries", Integer.toString(entries.size()));
+
+        inventory.setItem(SLOT_PREVIOUS, page.hasPrevious()
+                ? button(icon("minecraft:arrow"), "catalogue-previous", Map.of(), LORE_PREVIOUS)
+                : null);
+        inventory.setItem(SLOT_NEXT, page.hasNext()
+                ? button(icon("minecraft:arrow"), "catalogue-next", Map.of(), LORE_NEXT)
+                : null);
+        inventory.setItem(SLOT_PAGE, button(icon("minecraft:book"), "catalogue-page", pagePlaceholders, LORE_PAGE));
+        inventory.setItem(SLOT_AMOUNT, button(icon("minecraft:gold_ingot"), "catalogue-amount",
+                Map.of("amount", Integer.toString(selectedAmount())), LORE_AMOUNT));
+        inventory.setItem(SLOT_CLOSE, button(icon("minecraft:barrier"), "catalogue-close", Map.of(), LORE_CLOSE));
     }
 
     private ItemStack tabItem(CatalogueCategory tab, boolean selected) {
-        return named(iconFor(tab), selected ? MESSAGE_TAB_SELECTED : MESSAGE_TAB,
-                Map.of("category", tab.displayName()));
+        return button(iconFor(tab), selected ? MESSAGE_TAB_SELECTED : MESSAGE_TAB,
+                Map.of("category", tab.displayName()), LORE_TAB);
     }
 
-    private ItemStack named(Material material, String messageKey) {
-        return named(material, messageKey, Map.of());
-    }
-
-    private ItemStack named(Material material, String messageKey, Map<String, String> placeholders) {
+    /**
+     * A catalogue entry: the real item, with its real name, plus a hint in its hover text.
+     *
+     * <p>The hint is presentation only. {@code take()} builds a clean {@code new ItemStack(material)}
+     * from the material, so no lore or display name from the menu is ever handed to the player.
+     */
+    private ItemStack entry(Material material) {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            // Labels come from messages.yml like every other string in the plugin, so wording is
-            // never trapped in bytecode.
-            meta.displayName(renderer.render(messageKey, placeholders));
+            meta.lore(renderer.renderLines(LORE_ITEM, Map.of("amount", Integer.toString(selectedAmount()))));
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private ItemStack button(Material material, String labelKey, Map<String, String> placeholders, String loreKey) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            // Labels and lore come from messages.yml like every other string in the plugin, so
+            // wording is never trapped in bytecode.
+            meta.displayName(renderer.render(labelKey, placeholders));
+            meta.lore(renderer.renderLines(loreKey, placeholders));
             item.setItemMeta(meta);
         }
         return item;

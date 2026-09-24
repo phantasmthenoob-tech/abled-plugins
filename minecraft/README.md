@@ -131,6 +131,19 @@ Both are validated on load. An invalid value is reported in the console with its
 back to the documented default instead of crashing startup. `/medieval reload` re-reads both, and
 the deathban duration is read through the settings snapshot, so a reload takes effect immediately.
 
+**Both files are layered over the copies bundled in the jar.** Bukkit writes a bundled resource only
+when the file is absent and never merges new keys into a file that already exists, so on a server
+that is upgrading, a key this version introduced would otherwise be unknown - every new message
+would render as `Missing message: <key>`, which is what a menu full of nothing actually means. With
+the bundled copy layered underneath:
+
+| | |
+| --- | --- |
+| A key added by an update | works immediately, no hand-editing |
+| A key you have edited | your wording wins, including one you deliberately blanked |
+| The file on disk | is still the only thing read and written - comments and ordering survive |
+| A file that is behind | is reported once at startup, naming the keys filled from the bundle |
+
 `dimensions.nether.enabled` and `dimensions.end.enabled` are **defaults, not the live state**: the
 first `/nether open` or `/end close` records the decision in the database, and from then on the
 stored value wins so an event that opened a dimension is not undone by the next restart. A gate
@@ -143,11 +156,10 @@ the command is invisible to every other player including other operators. Use a 
 offline-mode server: names are not protected there, so anyone who registers the name first inherits
 the command. `/medieval reload` applies a change immediately.
 
-> **Upgrading an existing server**: Bukkit writes the bundled `config.yml` only on first enable and
-> never merges new keys into an existing file, so a server that already has a
-> `plugins/Medieval/config.yml` will not contain the `admin:` block. The catalogue then simply uses
-> the shipped default (`Disgraced_`); copy the block in from the resource in this repository if you
-> want the key present and documented in your own file.
+An `admin:` block does not have to be present for this to work - a `config.yml` from an older
+version is topped up from the bundled copy at load, so the key resolves to the shipped default
+(`Disgraced_`) either way. Add the block to your own file only if you want the setting documented
+where you edit it.
 
 ## Owner catalogue
 
@@ -171,6 +183,12 @@ row 6  (slots 45-53) previous, take amount, page number, next, close
 | Take amount button | Cycles 1 → 8 → 16 → 32 → 64 |
 | Click a tab | Switches category, back to page 1 |
 | Close button | Closes the menu |
+
+Every element carries hover text explaining what it does - the buttons, the tabs, and each item
+("click to take 1, right-click or shift-click for a full stack"). That text lives in `messages.yml`,
+and a multi-line value there becomes multi-line lore, so wording is editable without a rebuild and
+nothing is hardcoded in bytecode. The hint on a catalogue entry is presentation only: what you take
+is a clean stack built from the item type, never the menu's copy of it.
 
 Details that matter in practice:
 

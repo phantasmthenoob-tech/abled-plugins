@@ -5,6 +5,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.command.CommandSender;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -35,6 +36,25 @@ public final class MessageRenderer {
 
     public Component render(String key) {
         return render(key, Map.of());
+    }
+
+    /**
+     * Renders a template into one component per line, for item lore.
+     *
+     * <p>A lore block is a multi-line value in {@code messages.yml} (a YAML block scalar), which the
+     * core message service already returns with its newlines intact. Splitting here means hover text
+     * needs no list support in the configuration model and stays editable with the same
+     * {@code {placeholder}} rules as every other message. An empty or missing template yields no
+     * lines rather than a blank lore line.
+     */
+    public List<Component> renderLines(String key, Map<String, String> placeholders) {
+        return messages.raw(key, placeholders).lines()
+                .map(line -> MiniMessage.miniMessage().deserialize(line))
+                .toList();
+    }
+
+    public List<Component> renderLines(String key) {
+        return renderLines(key, Map.of());
     }
 
     public Component renderWithPrefix(String key) {
