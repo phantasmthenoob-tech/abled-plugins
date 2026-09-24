@@ -118,10 +118,25 @@ class JdbcDatabaseTest {
 
     @Test
     void reportsMissingGeneratedKeys() {
+        // An UPDATE executes successfully but returns no row id, which is the case this guard
+        // exists for: without it the caller would store the 0/-1 that getGeneratedKeys leaves
+        // behind as if it were a real id. (A SELECT never reaches this branch - sqlite-jdbc
+        // rejects it earlier with "Query returns results".)
+        StorageException failure = assertThrows(StorageException.class,
+                () -> database.insert("UPDATE probe SET label = 'x' WHERE id = 999", SqlBinder.none()));
+
+        assertTrue(failure.getMessage().contains("generated key"), failure.getMessage());
+    }
+
+    @Test
+    void surfacesAStatementThatCannotBeExecutedAsAWrite() {
+        // Verified against sqlite-jdbc 3.53.4.0: selecting with RETURN_GENERATED_KEYS fails in the
+        // driver. The message must still name the operation and the statement.
         StorageException failure = assertThrows(StorageException.class,
                 () -> database.insert("SELECT 1", SqlBinder.none()));
 
-        assertTrue(failure.getMessage().contains("generated key"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("insert failed"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("SELECT 1"), failure.getMessage());
     }
 
     private long countRows() {

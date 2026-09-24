@@ -30,6 +30,12 @@ tasks.jar {
     archiveBaseName.set("Medieval")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
+    // Declared explicitly: the bundle below unzips and filters this configuration into a file
+    // tree, and a filtered tree no longer carries the tasks that produced its inputs, so Gradle 9
+    // would otherwise reject the merge as an implicit dependency between this task and the
+    // :medieval-api / :medieval-core jar tasks.
+    dependsOn(configurations.runtimeClasspath)
+
     // Self-contained plugin jar: our own modules (medieval-api, medieval-core) are merged in.
     // paper-api is compileOnly, so it is never on the runtime classpath and never bundled.
     // Using the runtime classpath as a provider keeps evaluation lazy and makes Gradle add the

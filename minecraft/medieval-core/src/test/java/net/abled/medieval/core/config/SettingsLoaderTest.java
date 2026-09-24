@@ -40,20 +40,22 @@ class SettingsLoaderTest {
 
     @Test
     void appliesConfiguredValues() {
-        MedievalSettings settings = load(Map.of(
-                "deathban.enabled", false,
-                "deathban.duration-seconds", 60L,
-                "dimensions.nether.enabled", true,
-                "dimensions.end.enabled", true,
-                "siege.enabled", false,
-                "siege.ram.health", 500,
-                "siege.ram.damage", 25,
-                "siege.ram.cooldown-seconds", 2L,
-                "siege.catapult.health", 300,
-                "siege.catapult.damage", 75,
-                "siege.catapult.cooldown-seconds", 10L,
-                "territory.max-claims-per-kingdom", 5,
-                "territory.protect-claims", false));
+        // Map.ofEntries, not Map.of: this configuration has more than the ten key/value pairs that
+        // Map.of accepts, and each value is widened to Object so all entries share one value type.
+        MedievalSettings settings = load(Map.ofEntries(
+                Map.entry("deathban.enabled", (Object) false),
+                Map.entry("deathban.duration-seconds", 60L),
+                Map.entry("dimensions.nether.enabled", true),
+                Map.entry("dimensions.end.enabled", true),
+                Map.entry("siege.enabled", false),
+                Map.entry("siege.ram.health", 500),
+                Map.entry("siege.ram.damage", 25),
+                Map.entry("siege.ram.cooldown-seconds", 2L),
+                Map.entry("siege.catapult.health", 300),
+                Map.entry("siege.catapult.damage", 75),
+                Map.entry("siege.catapult.cooldown-seconds", 10L),
+                Map.entry("territory.max-claims-per-kingdom", 5),
+                Map.entry("territory.protect-claims", false)));
 
         assertFalse(settings.deathban().enabled());
         assertEquals(60L, settings.deathban().duration().toSeconds());

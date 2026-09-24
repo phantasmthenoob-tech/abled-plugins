@@ -22,7 +22,12 @@ public record AccessDecision(boolean allowed, Duration remaining) {
         }
     }
 
-    public static AccessDecision allowed() {
+    /**
+     * The access-allowed outcome. Named {@code permit} rather than {@code allowed} because a record
+     * already generates an {@code allowed()} accessor for the {@code allowed} component, and a
+     * static method with that name and a different return type is a compile error.
+     */
+    public static AccessDecision permit() {
         return new AccessDecision(true, Duration.ZERO);
     }
 

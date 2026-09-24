@@ -75,16 +75,16 @@ public final class DeathbanService implements MedievalService {
         Instant now = clock.instant();
         Optional<DeathbanEntry> stored = store.find(playerId);
         if (stored.isEmpty()) {
-            return AccessDecision.allowed();
+            return AccessDecision.permit();
         }
 
         DeathbanEntry entry = stored.get();
         if (entry.isActive(now)) {
-            return isEnabled() ? AccessDecision.denied(entry.remaining(now)) : AccessDecision.allowed();
+            return isEnabled() ? AccessDecision.denied(entry.remaining(now)) : AccessDecision.permit();
         }
 
         store.delete(playerId);
-        return AccessDecision.allowed();
+        return AccessDecision.permit();
     }
 
     /**
