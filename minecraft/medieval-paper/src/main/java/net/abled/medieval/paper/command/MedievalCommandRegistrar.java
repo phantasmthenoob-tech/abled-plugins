@@ -41,14 +41,17 @@ public final class MedievalCommandRegistrar {
     private final MessageRenderer renderer;
     private final DeathbanCommands deathbanCommands;
     private final DimensionCommands dimensionCommands;
+    private final CatalogueCommand catalogueCommands;
 
     public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
-                                    DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands) {
+                                    DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands,
+                                    CatalogueCommand catalogueCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.deathbanCommands = Objects.requireNonNull(deathbanCommands, "deathbanCommands");
         this.dimensionCommands = Objects.requireNonNull(dimensionCommands, "dimensionCommands");
+        this.catalogueCommands = Objects.requireNonNull(catalogueCommands, "catalogueCommands");
     }
 
     public void register() {
@@ -64,6 +67,9 @@ public final class MedievalCommandRegistrar {
                                     .requires(source -> source.getSender().hasPermission(PERMISSION_RELOAD))
                                     .executes(context -> reload(context.getSource())))
                             .then(deathbanCommands.node())
+                            // Not listed in plugin.yml and gated by the configured owner rather
+                            // than a permission, so it stays invisible to everyone else.
+                            .then(catalogueCommands.node())
                             .build(),
                     "Medieval Era server commands",
                     List.of("med"));
@@ -111,6 +117,13 @@ public final class MedievalCommandRegistrar {
             renderer.send(sender, "help-line",
                     Map.of("command", "end open|close|status",
                             "description", "Open or seal the End"), false);
+        }
+        // Only the configured owner sees this line, so /medieval help does not advertise the
+        // catalogue to anybody else either.
+        if (catalogueCommands.isOwner(sender)) {
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval " + CatalogueCommand.LABEL,
+                            "description", "Open the item catalogue"), false);
         }
         return Command.SINGLE_SUCCESS;
     }

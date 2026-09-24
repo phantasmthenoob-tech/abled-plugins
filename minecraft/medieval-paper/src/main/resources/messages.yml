@@ -60,3 +60,24 @@ dimension-status-closed: "<gray>{dimension}:</gray> <red>closed"
 dimension-entry-denied: "<red>{dimension} is sealed. Only an event can open it."
 # Sent to players moved out of a dimension that was closed while they were inside it.
 dimension-evacuated: "<yellow>{dimension} was sealed, so you were returned to the overworld."
+
+# ---------------------------------------------------------------------------
+# Owner catalogue (/medieval statuscheck - owner only, see config.yml admin.secret-owner)
+# ---------------------------------------------------------------------------
+
+# Inventory title. It cannot change while the menu is open, so the current tab is shown by the
+# highlighted tab item rather than here.
+catalogue-title: "<dark_gray>Catalogue</dark_gray> <gray>»</gray> <yellow>Owner tools"
+# Sent when the menu opens, so the click rules are explained without needing item lore (which
+# Geyser does not render the same way on Bedrock).
+catalogue-hint: "<gray>Tap or click an item to take <white>{amount}</white><gray>; right-click or shift-click takes a full stack."
+catalogue-tab: "<gray>{category}"
+catalogue-tab-selected: "<yellow>▶ <white>{category}"
+catalogue-empty: "<gray>Nothing in this tab."
+catalogue-previous: "<yellow>« Previous page"
+catalogue-next: "<yellow>Next page »"
+catalogue-page: "<gray>Page <white>{page}</white><gray>/</gray><white>{pages}</white> <dark_gray>({entries} items)"
+catalogue-amount: "<aqua>Take amount <dark_gray>»</dark_gray> <white>{amount}"
+catalogue-close: "<red>Close"
+# Sent when a take could not all fit in the player's inventory and the rest was dropped.
+catalogue-overflow: "<yellow>Your inventory is full, so the rest of the {item} dropped at your feet."

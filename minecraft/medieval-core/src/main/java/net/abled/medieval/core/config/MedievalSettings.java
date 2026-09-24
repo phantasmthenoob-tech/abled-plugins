@@ -14,14 +14,30 @@ public record MedievalSettings(
         Deathban deathban,
         Dimensions dimensions,
         Siege siege,
-        Territory territory
+        Territory territory,
+        Admin admin
 ) {
+
+    /** Who may use the hidden owner catalogue when configuration does not say otherwise. */
+    public static final String DEFAULT_SECRET_OWNER = "Disgraced_";
 
     public MedievalSettings {
         Objects.requireNonNull(deathban, "deathban");
         Objects.requireNonNull(dimensions, "dimensions");
         Objects.requireNonNull(siege, "siege");
         Objects.requireNonNull(territory, "territory");
+        Objects.requireNonNull(admin, "admin");
+    }
+
+    /**
+     * Gameplay-only view of the settings, with the owner defaulted.
+     *
+     * <p>For callers that have nothing to do with the hidden admin catalogue - tests of kingdom,
+     * siege and deathban rules, and any future code that only needs gameplay values - so adding
+     * owner configuration did not force a change on every construction site.
+     */
+    public MedievalSettings(Deathban deathban, Dimensions dimensions, Siege siege, Territory territory) {
+        this(deathban, dimensions, siege, territory, Admin.defaults());
     }
 
     /** One hour by default; the ban survives restarts once the SQL store is wired in. */
@@ -75,12 +91,36 @@ public record MedievalSettings(
         }
     }
 
+    /**
+     * Hidden owner tooling.
+     *
+     * <p>The value is either a player name or a UUID; {@code OwnerGate} interprets it and explains
+     * why a UUID is the better choice on an offline-mode server. A blank value is rejected here
+     * rather than silently disabling the tools, because a configuration mistake should be visible in
+     * the startup log instead of leaving the owner wondering why their command does nothing.
+     */
+    public record Admin(String secretOwner) {
+
+        public Admin {
+            Objects.requireNonNull(secretOwner, "secretOwner");
+            if (secretOwner.isBlank()) {
+                throw new IllegalArgumentException("admin.secret-owner must not be blank");
+            }
+        }
+
+        public static Admin defaults() {
+            return new Admin(DEFAULT_SECRET_OWNER);
+        }
+    }
+
     /** Compact single-line summary used in startup logs and {@code /medieval info}. */
     public String summary() {
         return "deathban=" + (deathban.enabled() ? deathban.duration().toSeconds() + "s" : "disabled")
                 + ", nether=" + (dimensions.netherEnabled() ? "open" : "closed")
                 + ", end=" + (dimensions.endEnabled() ? "open" : "closed")
                 + ", siege=" + (siege.enabled() ? "enabled" : "disabled")
-                + ", claims=" + territory.maxClaimsPerKingdom();
+                + ", claims=" + territory.maxClaimsPerKingdom()
+                // Console-only: this line goes to the server log, never to a player.
+                + ", owner=" + admin.secretOwner();
     }
 }

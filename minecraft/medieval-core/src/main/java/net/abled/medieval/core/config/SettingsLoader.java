@@ -21,6 +21,7 @@ public final class SettingsLoader {
     public static final int DEFAULT_CATAPULT_DAMAGE = 150;
     public static final long DEFAULT_CATAPULT_COOLDOWN_SECONDS = 6L;
     public static final int DEFAULT_MAX_CLAIMS_PER_KINGDOM = 25;
+    public static final String DEFAULT_SECRET_OWNER = MedievalSettings.DEFAULT_SECRET_OWNER;
 
     private SettingsLoader() {
     }
@@ -47,7 +48,23 @@ public final class SettingsLoader {
                 nonNegativeInt(source, warnings, "territory.max-claims-per-kingdom", DEFAULT_MAX_CLAIMS_PER_KINGDOM),
                 source.getBoolean("territory.protect-claims", true));
 
-        return new MedievalSettings(deathban, dimensions, siege, territory);
+        MedievalSettings.Admin admin = new MedievalSettings.Admin(secretOwner(source, warnings));
+
+        return new MedievalSettings(deathban, dimensions, siege, territory, admin);
+    }
+
+    /**
+     * The owner of the hidden catalogue. Unlike the numeric settings this value cannot be "fixed"
+     * by falling back silently to a wrong owner - falling back to the documented default is the
+     * only safe option, and it is reported so the console states which name is in force.
+     */
+    private static String secretOwner(SettingsSource source, Consumer<String> warnings) {
+        String configured = source.getString("admin.secret-owner", DEFAULT_SECRET_OWNER);
+        if (configured == null || configured.isBlank()) {
+            warnings.accept("admin.secret-owner must not be blank; using " + DEFAULT_SECRET_OWNER);
+            return DEFAULT_SECRET_OWNER;
+        }
+        return configured.trim();
     }
 
     private static MedievalSettings.Siege.Machine machine(SettingsSource source, Consumer<String> warnings, String path,

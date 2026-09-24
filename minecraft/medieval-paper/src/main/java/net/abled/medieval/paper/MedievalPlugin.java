@@ -3,6 +3,7 @@ package net.abled.medieval.paper;
 import net.abled.medieval.api.MedievalPlatform;
 import net.abled.medieval.api.MedievalScheduler;
 import net.abled.medieval.core.MedievalCore;
+import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.core.config.MedievalSettings;
 import net.abled.medieval.core.config.SettingsLoader;
 import net.abled.medieval.core.deathban.DeathbanService;
@@ -10,6 +11,9 @@ import net.abled.medieval.core.message.MessageService;
 import net.abled.medieval.core.player.PlayerIdentityService;
 import net.abled.medieval.core.world.DimensionAccessService;
 import net.abled.medieval.paper.capability.CapabilityReport;
+import net.abled.medieval.paper.catalogue.CatalogueIndex;
+import net.abled.medieval.paper.catalogue.CatalogueListener;
+import net.abled.medieval.paper.command.CatalogueCommand;
 import net.abled.medieval.paper.command.DeathbanCommands;
 import net.abled.medieval.paper.command.DimensionCommands;
 import net.abled.medieval.paper.command.MedievalCommandRegistrar;
@@ -88,9 +92,17 @@ public final class MedievalPlugin extends JavaPlugin {
         core.services().register(DimensionAccessService.class, dimensions);
         core.enable();
 
+        // The hidden owner catalogue. The gate is a supplier so a changed admin.secret-owner takes
+        // effect on /medieval reload; the item index is built lazily on the first open, so startup
+        // never pays for a listing most restarts are never asked to show.
+        CatalogueIndex catalogue = new CatalogueIndex();
+        CatalogueCommand catalogueCommands = new CatalogueCommand(catalogue, renderer,
+                () -> OwnerGate.of(core.settings().admin().secretOwner()), getLogger());
+
         DimensionCommands dimensionCommands = new DimensionCommands(dimensions, scheduler, renderer, getLogger());
         new MedievalCommandRegistrar(this, core, renderer,
-                new DeathbanCommands(deathbans, identities, scheduler, renderer, getLogger()), dimensionCommands)
+                new DeathbanCommands(deathbans, identities, scheduler, renderer, getLogger()),
+                dimensionCommands, catalogueCommands)
                 .register();
 
         getServer().getPluginManager().registerEvents(
@@ -99,6 +111,7 @@ public final class MedievalPlugin extends JavaPlugin {
                 new DeathbanListener(deathbans, renderer, getLogger()), this);
         getServer().getPluginManager().registerEvents(
                 new DimensionGateListener(dimensions, renderer), this);
+        getServer().getPluginManager().registerEvents(new CatalogueListener(renderer), this);
 
         scheduler.runAsyncRepeating(() -> purgeExpiredBans(deathbans), PURGE_INITIAL_DELAY, PURGE_PERIOD);
 
@@ -109,6 +122,14 @@ public final class MedievalPlugin extends JavaPlugin {
                 + ": " + (open ? "open" : "closed")));
         getLogger().info("Loaded " + core.services().size() + " core service(s), "
                 + identities.knownProfiles() + " stored player profile(s)");
+
+        OwnerGate owner = OwnerGate.of(settings.admin().secretOwner());
+        if (owner.isConfigured()) {
+            getLogger().info("Owner catalogue enabled for " + owner.describe()
+                    + " (/medieval " + CatalogueCommand.LABEL + ")");
+        } else {
+            getLogger().warning("admin.secret-owner is blank, so the owner catalogue is disabled");
+        }
     }
 
     @Override

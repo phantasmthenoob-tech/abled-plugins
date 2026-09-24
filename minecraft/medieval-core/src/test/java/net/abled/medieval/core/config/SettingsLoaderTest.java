@@ -112,6 +112,32 @@ class SettingsLoaderTest {
     }
 
     @Test
+    void catalogueOwnerDefaultsToTheShippedName() {
+        MedievalSettings settings = load(Map.of());
+
+        assertEquals("Disgraced_", MedievalSettings.DEFAULT_SECRET_OWNER);
+        assertEquals(MedievalSettings.DEFAULT_SECRET_OWNER, settings.admin().secretOwner());
+        assertEquals(List.of(), warnings, "an absent owner entry is not a misconfiguration");
+    }
+
+    @Test
+    void readsTheConfiguredCatalogueOwner() {
+        MedievalSettings settings = load(Map.of("admin.secret-owner", "  SomeoneElse  "));
+
+        assertEquals("SomeoneElse", settings.admin().secretOwner());
+        assertEquals(List.of(), warnings);
+    }
+
+    @Test
+    void blankCatalogueOwnerFallsBackAndWarns() {
+        MedievalSettings settings = load(Map.of("admin.secret-owner", "   "));
+
+        assertEquals(MedievalSettings.DEFAULT_SECRET_OWNER, settings.admin().secretOwner());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("admin.secret-owner"), warnings.get(0));
+    }
+
+    @Test
     void summaryReportsCurrentState() {
         String summary = load(Map.of()).summary();
 
@@ -119,6 +145,8 @@ class SettingsLoaderTest {
         assertTrue(summary.contains("nether=closed"), summary);
         assertTrue(summary.contains("end=closed"), summary);
         assertTrue(summary.contains("claims=25"), summary);
+        // The owner line goes to the console only, never to a player-facing message.
+        assertTrue(summary.contains("owner=" + MedievalSettings.DEFAULT_SECRET_OWNER), summary);
     }
 
     @Test

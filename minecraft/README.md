@@ -124,7 +124,7 @@ One plugin artifact serves all of them. Players install nothing.
 
 | File | Purpose |
 | --- | --- |
-| `config.yml` | Gameplay values: deathban, dimensions, siege machines, territory limits |
+| `config.yml` | Gameplay values: deathban, dimensions, siege machines, territory limits, hidden owner tools |
 | `messages.yml` | MiniMessage templates; placeholders use `{braces}` |
 
 Both are validated on load. An invalid value is reported in the console with its path and falls
@@ -136,6 +136,57 @@ first `/nether open` or `/end close` records the decision in the database, and f
 stored value wins so an event that opened a dimension is not undone by the next restart. A gate
 nobody has touched keeps following `config.yml`, so editing the file and running `/medieval reload`
 still works until it is overridden.
+
+`admin.secret-owner` names the one player allowed to use the hidden `/medieval statuscheck`
+catalogue. It accepts a player name (case-insensitive) or a UUID, and it is **not** a permission -
+the command is invisible to every other player including other operators. Use a UUID on an
+offline-mode server: names are not protected there, so anyone who registers the name first inherits
+the command. `/medieval reload` applies a change immediately.
+
+> **Upgrading an existing server**: Bukkit writes the bundled `config.yml` only on first enable and
+> never merges new keys into an existing file, so a server that already has a
+> `plugins/Medieval/config.yml` will not contain the `admin:` block. The catalogue then simply uses
+> the shipped default (`Disgraced_`); copy the block in from the resource in this repository if you
+> want the key present and documented in your own file.
+
+## Owner catalogue
+
+`/medieval statuscheck` opens a chest-style catalogue of every item the server knows about,
+including the ones a player cannot normally obtain - barriers, command blocks, structure blocks, the
+debug stick, spawners, bedrock and the rest. Clicking gives you the item; nothing is crafted, farmed
+or looked up.
+
+```text
+row 1  (slots  0- 8)  category tabs: Everything, Building Blocks, Redstone, Tools & Utilities,
+                      Combat, Food & Drinks, Ingredients, Spawn Eggs, Admin & Technical
+rows 2-5 (slots 9-44) up to 36 items of the current page
+row 6  (slots 45-53) previous, take amount, page number, next, close
+```
+
+| Action | Result |
+| --- | --- |
+| Click an item | Takes the amount selected by the **Take amount** button (1, 8, 16, 32, 64) |
+| Right-click an item | Takes a full stack |
+| Shift-click an item | Takes a full stack |
+| Take amount button | Cycles 1 → 8 → 16 → 32 → 64 |
+| Click a tab | Switches category, back to page 1 |
+| Close button | Closes the menu |
+
+Details that matter in practice:
+
+- **The listing is built from the server's own registry**, not a hardcoded item list, so it is correct
+  for whatever version the server runs and every obtainable item is reachable.
+- **Bedrock/Geyser works.** Nothing depends on telling a left-click from a right-click, because
+  Geyser cannot: every Bedrock tap arrives as a left-click. A tap therefore takes the selected
+  amount, and the Take amount button is how a touch player takes stacks - shift-click is not
+  reachable on touch. See the Geyser constraint below.
+- **Nothing moves by vanilla rules.** Every click and drag in the menu is cancelled and then
+  interpreted, so a catalogue button can never be picked up onto the cursor, hotbar-swapped, or
+  dropped with Q; items arrive only through the take path, which decides the amount itself.
+- **A full inventory drops the remainder** at the player's feet and says so, instead of losing the
+  items silently.
+- **Adding items is a registry walk**, so a new version's items appear with no code change. An item
+  the server reports no category for is still listed under Everything rather than being dropped.
 
 ## Persistence
 
@@ -186,11 +237,16 @@ migrations of the phases that implement them, so the schema never advertises dat
 | `/medieval deathban list` | `medieval.command.deathban` | implemented |
 | `/nether open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/end open|close|status` | `medieval.command.dimension` (default: op) | implemented |
+| `/medieval statuscheck` | **owner only** - `admin.secret-owner`, no permission node | implemented |
 
 Commands are registered through Paper's Brigadier API at runtime rather than declared in
 `plugin.yml`, so listing and tab completion follow each branch's `requires` predicate: a sender
 without `medieval.command.deathban` never sees the administrative branches, and the permission
 defaults to op so they are not exposed to ordinary players.
+
+`/medieval statuscheck` is gated the same way but by the configured owner rather than a permission,
+and its help line is only sent to that player - hiding the name is a convenience, not the rule, and
+the check runs on execution regardless.
 
 The dimension gates are enforced, not merely recorded: while a gate is closed, portal travel into
 that dimension is cancelled for players and for every other entity (a mounted player, a mob, a
@@ -222,6 +278,9 @@ Honest status — nothing below is represented by an interface without an implem
   `status`; the decision is persisted in `world_state` and therefore survives a restart, a gate with
   no stored row follows `config.yml`, and the decision is published on the event bus as
   `DimensionAccessChanged` so events, GUIs and announcements react instead of being wired in.
+- **Owner catalogue, wired end to end**: `/medieval statuscheck` opens a paged, tabbed chest GUI of
+  every item in the server's registry and hands items out; the gate is a name/UUID check
+  (`OwnerGate`) rather than a permission, so other operators cannot use it.
 - Startup/shutdown lifecycle: storage opens before services, and the plugin disables itself if the
   database cannot be opened instead of running without persistence.
 - Command surface above, capability detection and startup logging.
@@ -241,7 +300,7 @@ persistence code.
 | Defenses | Barricades, walls, gates, towers, traps, structure HP |
 | Siege | Battering ram, catapult, ballista, siege tower, projectiles, ownership |
 | GUIs | Inventory-first menu framework, usable from Java and Bedrock |
-| Admin | `/medieval give|kingdom|siege|event|world`, private owner catalogue GUI |
+| Admin | `/medieval give|kingdom|siege|event|world` (the owner catalogue GUI exists - see above) |
 | World | Terralith integration, border + pre-generation, ores, structures |
 | Assets | Generated Java pack, Bedrock pack and Geyser mappings from one definition set |
 

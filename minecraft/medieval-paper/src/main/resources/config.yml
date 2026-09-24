@@ -35,3 +35,15 @@ territory:
   # When true, unauthorised players cannot modify blocks inside another kingdom's claims.
   # Siege exceptions and administrative overrides are applied by the siege system itself.
   protect-claims: true
+
+# Hidden owner tools. Nothing here is a permission: the command stays invisible to everyone
+# except the player named below, whether or not they are an operator.
+admin:
+  # The only player allowed to run the hidden /medieval statuscheck item catalogue.
+  #
+  # Accepts a player name (case-insensitive) or a UUID. A UUID is the better choice on an
+  # offline-mode server, where names are not protected and anyone could register this one and
+  # inherit the command; on a premium server the name is safe to use.
+  #
+  # Change this before opening the server to the public.
+  secret-owner: "Disgraced_"
