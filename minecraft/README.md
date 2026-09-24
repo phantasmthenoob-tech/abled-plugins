@@ -131,6 +131,12 @@ Both are validated on load. An invalid value is reported in the console with its
 back to the documented default instead of crashing startup. `/medieval reload` re-reads both, and
 the deathban duration is read through the settings snapshot, so a reload takes effect immediately.
 
+`dimensions.nether.enabled` and `dimensions.end.enabled` are **defaults, not the live state**: the
+first `/nether open` or `/end close` records the decision in the database, and from then on the
+stored value wins so an event that opened a dimension is not undone by the next restart. A gate
+nobody has touched keeps following `config.yml`, so editing the file and running `/medieval reload`
+still works until it is overridden.
+
 ## Persistence
 
 One SQLite file, `plugins/Medieval/medieval.db`, owns all durable state. The JDBC driver is **not**
@@ -162,6 +168,8 @@ migrations of the phases that implement them, so the schema never advertises dat
 | Deathban check + profile write on login | asynchronous pre-login thread | Keeps a login off the tick thread; the decision is taken before the player joins |
 | Deathban write on death | tick thread | One single-row statement; it must be committed before the player respawns, and the storage layer serialises access |
 | `/medieval deathban ...` | database work asynchronous, messages handed back with `runSync` | Admin commands never block the tick thread on disk, and never touch Bukkit state off it |
+| Dimension gate read (portal travel) | tick thread | Served from an immutable in-memory snapshot, so a portal never waits on disk |
+| Dimension gate change (`/nether`, `/end`) | database write asynchronous, reply + evacuation on `runSync` | Same contract as the admin commands above |
 | Expired-ban purge | asynchronous repeating task | Housekeeping, cancelled before storage closes |
 | Repository reads/writes | any thread | `Database` guards its connection, so point reads and single-row writes are safe from any thread |
 
@@ -176,11 +184,20 @@ migrations of the phases that implement them, so the schema never advertises dat
 | `/medieval deathban set <player> <duration>` | `medieval.command.deathban` | implemented |
 | `/medieval deathban clear <player>` | `medieval.command.deathban` | implemented |
 | `/medieval deathban list` | `medieval.command.deathban` | implemented |
+| `/nether open|close|status` | `medieval.command.dimension` (default: op) | implemented |
+| `/end open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 
 Commands are registered through Paper's Brigadier API at runtime rather than declared in
 `plugin.yml`, so listing and tab completion follow each branch's `requires` predicate: a sender
 without `medieval.command.deathban` never sees the administrative branches, and the permission
 defaults to op so they are not exposed to ordinary players.
+
+The dimension gates are enforced, not merely recorded: while a gate is closed, portal travel into
+that dimension is cancelled for players and for every other entity (a mounted player, a mob, a
+chest pushed through a portal), and anyone already inside is moved back to the overworld. Building a
+portal is still allowed, so a dimension an event opens later already has its portals lit.
+Closing a gate is an asynchronous database write; the reply and the evacuation are handed back to
+the tick thread, so no Bukkit state is touched off it.
 
 ## Implementation status
 
@@ -201,13 +218,17 @@ Honest status — nothing below is represented by an interface without an implem
   asynchronous pre-login gate reads the ban and refuses the login with the remaining time; expired
   rows are released on sight and swept in the background; `/medieval deathban check|set|clear|list`
   provides the administrative interface behind `medieval.command.deathban`.
+- **Dimension gating, wired end to end**: `/nether` and `/end` each take `open`, `close` and
+  `status`; the decision is persisted in `world_state` and therefore survives a restart, a gate with
+  no stored row follows `config.yml`, and the decision is published on the event bus as
+  `DimensionAccessChanged` so events, GUIs and announcements react instead of being wired in.
 - Startup/shutdown lifecycle: storage opens before services, and the plugin disables itself if the
   database cannot be opened instead of running without persistence.
 - Command surface above, capability detection and startup logging.
 
-`KingdomRepository`, `ClaimRepository` and `WorldStateRepository` are implemented and unit-tested,
-but nothing calls them yet: kingdoms, territory and dimension gating are their own phases and will
-use these repositories rather than new persistence code.
+`KingdomRepository` and `ClaimRepository` are implemented and unit-tested but nothing calls them
+yet: kingdoms and territory are their own phases and will use these repositories rather than new
+persistence code.
 
 **Not implemented yet — no placeholder code exists for these**
 
@@ -219,7 +240,6 @@ use these repositories rather than new persistence code.
 | Territory | Claims, protection, siege exceptions, admin overrides |
 | Defenses | Barricades, walls, gates, towers, traps, structure HP |
 | Siege | Battering ram, catapult, ballista, siege tower, projectiles, ownership |
-| Dimensions | Nether/End gating with persisted state and admin/event toggles |
 | GUIs | Inventory-first menu framework, usable from Java and Bedrock |
 | Admin | `/medieval give|kingdom|siege|event|world`, private owner catalogue GUI |
 | World | Terralith integration, border + pre-generation, ores, structures |

@@ -7,6 +7,8 @@ import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.config.MedievalSettings;
 import net.abled.medieval.core.util.TimeFormat;
+import net.abled.medieval.core.world.Dimension;
+import net.abled.medieval.core.world.DimensionAccessService;
 import net.abled.medieval.paper.MedievalPlugin;
 import net.abled.medieval.paper.message.MessageRenderer;
 import org.bukkit.command.CommandSender;
@@ -24,6 +26,10 @@ import java.util.logging.Level;
  * registration in one place, and a branch only exists for senders allowed to see it. Tab completion
  * and command listings therefore follow each branch's {@code requires} predicate instead of a
  * static permission list, so the administrative branches stay invisible to ordinary players.
+ *
+ * <p>The two dimension gates get their own top-level commands ({@code /nether} and {@code /end})
+ * rather than a branch under {@code /medieval}, because staff reach for them in a hurry during an
+ * event; both are built from the same code path in {@link DimensionCommands}.
  */
 public final class MedievalCommandRegistrar {
 
@@ -34,13 +40,15 @@ public final class MedievalCommandRegistrar {
     private final MedievalCore core;
     private final MessageRenderer renderer;
     private final DeathbanCommands deathbanCommands;
+    private final DimensionCommands dimensionCommands;
 
     public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
-                                    DeathbanCommands deathbanCommands) {
+                                    DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.deathbanCommands = Objects.requireNonNull(deathbanCommands, "deathbanCommands");
+        this.dimensionCommands = Objects.requireNonNull(dimensionCommands, "dimensionCommands");
     }
 
     public void register() {
@@ -59,6 +67,14 @@ public final class MedievalCommandRegistrar {
                             .build(),
                     "Medieval Era server commands",
                     List.of("med"));
+
+            // One short top-level command per gate. Each carries its own permission, so an ordinary
+            // player never sees /nether or /end in tab completion or the command list.
+            for (Dimension dimension : Dimension.values()) {
+                commands.register(dimensionCommands.node(dimension),
+                        "Open, close or inspect " + dimension.displayName(),
+                        List.of());
+            }
         });
     }
 
@@ -88,6 +104,14 @@ public final class MedievalCommandRegistrar {
                     Map.of("command", "medieval deathban list",
                             "description", "List every active banishment"), false);
         }
+        if (sender.hasPermission(DimensionCommands.PERMISSION)) {
+            renderer.send(sender, "help-line",
+                    Map.of("command", "nether open|close|status",
+                            "description", "Open or seal the Nether"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "end open|close|status",
+                            "description", "Open or seal the End"), false);
+        }
         return Command.SINGLE_SUCCESS;
     }
 
@@ -99,8 +123,11 @@ public final class MedievalCommandRegistrar {
         values.put("deathban", settings.deathban().enabled()
                 ? TimeFormat.humanize(settings.deathban().duration())
                 : "disabled");
-        values.put("nether", settings.dimensions().netherEnabled() ? "open" : "closed");
-        values.put("end", settings.dimensions().endEnabled() ? "open" : "closed");
+        // The live gate state, not config.yml: a gate can be opened or closed at runtime, and an
+        // administrator reading /medieval info needs to see what is actually true right now.
+        DimensionAccessService gate = core.services().find(DimensionAccessService.class).orElse(null);
+        values.put("nether", describeGate(gate, Dimension.NETHER));
+        values.put("end", describeGate(gate, Dimension.END));
         values.put("siege", settings.siege().enabled() ? "enabled" : "disabled");
         values.put("claims per kingdom", Integer.toString(settings.territory().maxClaimsPerKingdom()));
 
@@ -108,6 +135,10 @@ public final class MedievalCommandRegistrar {
         values.forEach((key, value) -> renderer.send(sender, "info-line",
                 Map.of("key", key, "value", value), false));
         return Command.SINGLE_SUCCESS;
+    }
+
+    private static String describeGate(DimensionAccessService gate, Dimension dimension) {
+        return gate == null ? "unknown" : gate.isOpen(dimension) ? "open" : "closed";
     }
 
     private int reload(CommandSourceStack source) {

@@ -44,3 +44,19 @@ deathban-list-line: " <white>{player}</white> <dark_gray>({source})</dark_gray> 
 deathban-list-empty: "<gray>No active banishments.</gray>"
 deathban-invalid-duration: "<red>Invalid duration. Accepted formats: <white>{usage}</white>"
 deathban-unknown-player: "<red>No stored profile for <white>{player}</white>. They must have joined the server at least once."
+
+# ---------------------------------------------------------------------------
+# Dimension gates (/nether open|close|status, /end open|close|status)
+# ---------------------------------------------------------------------------
+
+# Confirmation sent to whoever ran the command.
+dimension-opened: "<green>{dimension} is now open."
+dimension-closed: "<red>{dimension} is now closed."
+dimension-already-open: "<gray>{dimension} is already open."
+dimension-already-closed: "<gray>{dimension} is already closed."
+dimension-status-open: "<gray>{dimension}:</gray> <green>open"
+dimension-status-closed: "<gray>{dimension}:</gray> <red>closed"
+# Sent to a player whose portal travel was refused because the gate is shut.
+dimension-entry-denied: "<red>{dimension} is sealed. Only an event can open it."
+# Sent to players moved out of a dimension that was closed while they were inside it.
+dimension-evacuated: "<yellow>{dimension} was sealed, so you were returned to the overworld."

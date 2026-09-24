@@ -36,3 +36,6 @@ permissions:
   medieval.command.deathban:
     description: Allows checking, setting, clearing and listing deathbans.
     default: op
+  medieval.command.dimension:
+    description: Allows opening, closing and inspecting the Nether and End gates.
+    default: op
