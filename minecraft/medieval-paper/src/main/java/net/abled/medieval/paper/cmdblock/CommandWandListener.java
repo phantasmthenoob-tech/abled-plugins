@@ -2,11 +2,14 @@ package net.abled.medieval.paper.cmdblock;
 
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.paper.message.MessageRenderer;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -75,8 +78,37 @@ public final class CommandWandListener implements Listener {
         }
 
         // The wand's use wins over whatever the item would normally do: a command wand is not a
-        // fishing rod, and right-clicking it must not also cast a bobber or place a block.
-        event.setCancelled(true);
+        // fishing rod. Denying the item use outright (not just cancelling) tells the server the
+        // rod's action never happened, and removing any client-predicted cooldown makes the
+        // player's very next click land immediately - without this, the client locks the item as
+        // though a bobber were out and a wand clicked in quick succession feels laggy or dead.
+        event.setUseItemInHand(Event.Result.DENY);
+        event.setUseInteractedBlock(Event.Result.DENY);
+        if (player.hasCooldown(Material.FISHING_ROD)) {
+            player.setCooldown(Material.FISHING_ROD, 0);
+        }
+
         service.use(id.get(), player);
+    }
+
+    /**
+     * Eats the bobber a client-side rod cast may have produced.
+     *
+     * <p>The interact listener runs before the cast on the server, but a client that predicted
+     * the cast can still push a fishing hook into the world before the cancellation round-trips.
+     * Whatever hook still appears for a wand is removed, so the world stays clean and no wand
+     * ever leaves a bobber dangling out of a wall or floor.
+     */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onFish(PlayerFishEvent event) {
+        if (!gate.get().allows(event.getPlayer().getUniqueId(), event.getPlayer().getName())) {
+            return;
+        }
+        ItemStack rod = event.getPlayer().getInventory().getItem(event.getHand() == EquipmentSlot.OFF_HAND
+                ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+        if (factory.idOf(rod).isPresent()) {
+            event.setCancelled(true);
+            event.getHook().remove();
+        }
     }
 }
