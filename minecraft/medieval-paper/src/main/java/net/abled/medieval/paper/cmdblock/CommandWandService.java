@@ -107,6 +107,16 @@ public final class CommandWandService {
      * restart - a toggle left running across an unattended restart is a hazard, not a convenience.
      */
     public void load() {
+        // The table is owned here rather than by a migration: the service is the only reader and
+        // writer, and CREATE TABLE IF NOT EXISTS makes the first run on an existing database
+        // identical to a fresh install. Without this, the first wand binding on a server whose
+        // database predates the feature would fail on a missing table.
+        try {
+            database.update(SQL_CREATE, net.abled.medieval.core.storage.SqlBinder.none());
+        } catch (RuntimeException failure) {
+            log.error("Could not create the cmdblock_wands table", failure);
+        }
+
         try {
             database.queryMany(SQL_LIST, net.abled.medieval.core.storage.SqlBinder.none(), row -> {
                 UUID id = java.util.UUID.fromString(row.getString("id"));
