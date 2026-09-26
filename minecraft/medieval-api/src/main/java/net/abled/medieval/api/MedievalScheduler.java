@@ -36,6 +36,17 @@ public interface MedievalScheduler {
      */
     void runSync(Runnable task);
 
+    /**
+     * Runs the task once on the tick thread, after the given delay.
+     *
+     * <p>For work that must wait for the server to settle: handing a totem back after it has
+     * actually been spent, for example, rather than the instant the resurrect event fires. Like
+     * {@link #runSync(Runnable)}, the task may touch server state; a caller that already is the
+     * tick thread must still not be served its callback early, so an immediate zero-delay request
+     * waits for the next tick like any other.
+     */
+    void runSyncLater(Runnable task, Duration delay);
+
     /** Runs the task repeatedly, off the tick thread. */
     void runAsyncRepeating(Runnable task, Duration initialDelay, Duration period);
 

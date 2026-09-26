@@ -16,6 +16,7 @@ public record MedievalSettings(
         Siege siege,
         Territory territory,
         Land land,
+        Combat combat,
         Admin admin
 ) {
 
@@ -28,6 +29,7 @@ public record MedievalSettings(
         Objects.requireNonNull(siege, "siege");
         Objects.requireNonNull(territory, "territory");
         Objects.requireNonNull(land, "land");
+        Objects.requireNonNull(combat, "combat");
         Objects.requireNonNull(admin, "admin");
     }
 
@@ -39,13 +41,13 @@ public record MedievalSettings(
      * owner configuration did not force a change on every construction site.
      */
     public MedievalSettings(Deathban deathban, Dimensions dimensions, Siege siege, Territory territory) {
-        this(deathban, dimensions, siege, territory, Land.defaults(), Admin.defaults());
+        this(deathban, dimensions, siege, territory, Land.defaults(), Combat.defaults(), Admin.defaults());
     }
 
     /** As above, for callers that do configure the owner but not the search limits. */
     public MedievalSettings(Deathban deathban, Dimensions dimensions, Siege siege, Territory territory,
                             Admin admin) {
-        this(deathban, dimensions, siege, territory, Land.defaults(), admin);
+        this(deathban, dimensions, siege, territory, Land.defaults(), Combat.defaults(), admin);
     }
 
     /** One hour by default; the ban survives restarts once the SQL store is wired in. */
@@ -170,6 +172,28 @@ public record MedievalSettings(
     }
 
     /**
+     * Combat enchantment behaviour.
+     *
+     * <p>Each rule reinterprets an enchantment on the kinds of item medieval combat actually uses:
+     * quick charge as a faster attack on melee weapons, piercing as a shield-breaker, and infinity
+     * as preservation for consumables the vanilla game never lets it touch. They are separate
+     * switches rather than one master switch because an owner may want the shield-breaking piercing
+     * without the attack-speed quick charge, and a rule that cannot be turned off individually
+     * cannot be balanced.
+     */
+    public record Combat(
+            boolean quickChargeSpeedsMelee,
+            boolean piercingIgnoresShields,
+            boolean infinityPreservesConsumables,
+            boolean infinityKeepsTotem
+    ) {
+
+        public static Combat defaults() {
+            return new Combat(true, true, true, true);
+        }
+    }
+
+    /**
      * Hidden owner tooling.
      *
      * <p>The value is either a player name or a UUID; {@code OwnerGate} interprets it and explains
@@ -199,7 +223,26 @@ public record MedievalSettings(
                 + ", siege=" + (siege.enabled() ? "enabled" : "disabled")
                 + ", claims=" + territory.maxClaimsPerKingdom()
                 + ", search=" + (land.search().enabled() ? land.search().maxRadiusBlocks() + " blocks" : "off")
+                + ", combat=" + combatSummary()
                 // Console-only: this line goes to the server log, never to a player.
                 + ", owner=" + admin.secretOwner();
+    }
+
+    /** The combat rules as one compact token: only the ones that are on are listed. */
+    private String combatSummary() {
+        StringBuilder summary = new StringBuilder(48);
+        if (combat.quickChargeSpeedsMelee()) {
+            summary.append("quickcharge ");
+        }
+        if (combat.piercingIgnoresShields()) {
+            summary.append("pierce-shields ");
+        }
+        if (combat.infinityPreservesConsumables()) {
+            summary.append("infinity ");
+        }
+        if (combat.infinityKeepsTotem()) {
+            summary.append("totem");
+        }
+        return summary.isEmpty() ? "off" : summary.toString().trim();
     }
 }

@@ -1,10 +1,14 @@
 package net.abled.medieval.paper.catalogue;
 
 import net.abled.medieval.api.MedievalScheduler;
+import net.abled.medieval.core.catalogue.Amounts;
 import net.abled.medieval.core.util.TimeFormat;
 import net.abled.medieval.paper.message.MessageRenderer;
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -14,12 +18,18 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Asks a player what they are looking for, and hands the answer to the menu they were using.
+ * Asks a player a question in chat, and hands the answer to the GUI that asked it.
  *
  * <h2>Why chat, and not a sign or an anvil</h2>
  * Bedrock players arrive through Geyser, which does not carry the sign editor or anvil renaming
- * across. Typing into chat is the one text input every client has, so the prompt is a chat message
- * and the player's next line is captured before it broadcasts.
+ * across. Typing into chat is the one text input every client has, so every prompt here is a chat
+ * message and the player's next line is captured before it broadcasts.
+ *
+ * <h2>Three prompts, one capture</h2>
+ * The catalogue search, a custom take amount, and an enchantment level all share this path. What
+ * differs is the {@link Request} carried with the prompt: each kind holds its own context (the
+ * clicked item, the enchantment being set) and answers {@link Request#accept} with what to do on
+ * the tick thread. The capture, expiry and cancel rules stay written once.
  *
  * <h2>Threads</h2>
  * The chat event arrives on an asynchronous thread, so this class only records the answer there and
@@ -44,13 +54,103 @@ public final class CatalogueSearch {
     /** Keyword that abandons the prompt; shown to the player in the prompt text itself. */
     public static final String CANCEL = "cancel";
 
+    /** What to do with one chat answer, decided by the prompt kind. */
+    private sealed interface Request {
+
+        /** Message key naming this prompt, for expiry and cancel replies. */
+        String kind();
+
+        /**
+         * Runs the answer on the tick thread.
+         *
+         * @return true when the answer was used; false to report it as unusable instead
+         */
+        boolean accept(Player player, String text, CatalogueSearch search);
+    }
+
+    /** A catalogue item search: the answer is what to look for. */
+    private record SearchRequest(CatalogueMenu menu) implements Request {
+
+        @Override
+        public String kind() {
+            return "search";
+        }
+
+        @Override
+        public boolean accept(Player player, String text, CatalogueSearch search) {
+            if (!menu.search(text)) {
+                // Nothing to search for after normalisation (punctuation only, say): the menu is
+                // reopened unchanged rather than showing an empty result for a query nobody made.
+                menu.open(player, true);
+                search.renderer.send(player, "catalogue-search-blank", true);
+                return false;
+            }
+
+            menu.open(player, false);
+            search.renderer.send(player, "catalogue-search-found", Map.of(
+                    "query", menu.query(),
+                    "count", Integer.toString(menu.resultCount())), true);
+            return true;
+        }
+    }
+
+    /** A take amount for one item: the answer is how many to give, right now. */
+    private record AmountRequest(CatalogueMenu menu, Material material) implements Request {
+
+        @Override
+        public String kind() {
+            return "amount";
+        }
+
+        @Override
+        public boolean accept(Player player, String text, CatalogueSearch search) {
+            return Amounts.parse(text, material.getMaxStackSize()).map(amount -> {
+                search.handout.give(player, new ItemStack(material, amount));
+                search.renderer.send(player, "catalogue-amount-given", Map.of(
+                        "amount", Integer.toString(amount),
+                        "item", Names.of(material)), true);
+                return true;
+            }).orElseGet(() -> {
+                search.renderer.send(player, "catalogue-amount-bad", true);
+                return false;
+            });
+        }
+    }
+
+    /** An enchantment level for the draft being built: the answer is how strong to make it. */
+    private record LevelRequest(
+            EnchantPicker picker, Enchantment enchantment, EnchantDraft draftAtPrompt) implements Request {
+
+        @Override
+        public String kind() {
+            return "level";
+        }
+
+        @Override
+        public boolean accept(Player player, String text, CatalogueSearch search) {
+        java.util.Optional<Integer> level = Levels.parse(text, enchantment.getMaxLevel());
+        if (level.isEmpty()) {
+            search.renderer.send(player, "enchant-level-bad", Map.of(
+                    "enchantment", Names.prettify(enchantment.getKey().getKey()),
+                    "max", Integer.toString(enchantment.getMaxLevel())), true);
+            return false;
+        }            picker.apply(enchantment, level.get());
+            search.renderer.send(player, "enchant-level-set", Map.of(
+                    "enchantment", Names.prettify(enchantment.getKey().getKey()),
+                    "level", EnchantDraft.roman(level.get())), true);
+            return true;
+        }
+    }
+
     private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
     private final MedievalScheduler scheduler;
     private final MessageRenderer renderer;
+    private final CatalogueHandout handout;
 
-    public CatalogueSearch(MedievalScheduler scheduler, MessageRenderer renderer) {
+    public CatalogueSearch(MedievalScheduler scheduler, MessageRenderer renderer, CatalogueHandout handout) {
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
+        this.handout = Objects.requireNonNull(handout, "handout");
     }
 
     /**
@@ -58,18 +158,50 @@ public final class CatalogueSearch {
      * because it closes an inventory.
      */
     public void prompt(Player player, CatalogueMenu menu) {
+        ask(player, new SearchRequest(menu), "catalogue-search-prompt", Map.of(
+                "timeout", TimeFormat.humanize(TIMEOUT),
+                "cancel", CANCEL));
+    }
+
+    /**
+     * Closes the menu and asks how many of the clicked item to give. The answer is handed out
+     * immediately rather than only remembered, because that is what the click promised: the menu
+     * shows which item was clicked and it would be odd to answer and then have to click again.
+     */
+    public void promptAmount(Player player, CatalogueMenu menu, Material material) {
+        ask(player, new AmountRequest(menu, material), "catalogue-amount-prompt", Map.of(
+                "item", Names.of(material),
+                "stack", Integer.toString(Math.max(1, material.getMaxStackSize())),
+                "timeout", TimeFormat.humanize(TIMEOUT),
+                "cancel", CANCEL));
+    }
+
+    /**
+     * Closes the picker and asks what level to give the enchantment. The draft travels with the
+     * request so an answer that arrives after more clicks is still applied to a coherent item.
+     */
+    public void promptLevel(Player player, EnchantPicker picker, Enchantment enchantment) {
+        EnchantDraft draft = picker.draft();
+        ask(player, new LevelRequest(picker, enchantment, draft), "enchant-level-prompt", Map.of(
+                "enchantment", Names.prettify(enchantment.getKey().getKey()),
+                "item", Names.of(draft.material()),
+                "max", Integer.toString(enchantment.getMaxLevel()),
+                "timeout", TimeFormat.humanize(TIMEOUT),
+                "cancel", CANCEL));
+    }
+
+    private void ask(Player player, Request request, String promptKey, Map<String, String> placeholders) {
         Objects.requireNonNull(player, "player");
-        Objects.requireNonNull(menu, "menu");
+        Objects.requireNonNull(request, "request");
 
         // Abandoned prompts are dropped here rather than being left for the next chat line: the map
         // is tiny, and a stale entry could otherwise answer a message minutes later.
         Instant now = Instant.now();
-        pending.values().removeIf(request -> request.expired(now));
-        pending.put(player.getUniqueId(), new Pending(menu, now.plus(TIMEOUT)));
+        pending.values().removeIf(waiting -> waiting.expired(now));
+        pending.put(player.getUniqueId(), new Pending(request, now.plus(TIMEOUT)));
 
         player.closeInventory();
-        renderer.send(player, "catalogue-search-prompt",
-                Map.of("timeout", TimeFormat.humanize(TIMEOUT), "cancel", CANCEL), true);
+        renderer.send(player, promptKey, placeholders, true);
     }
 
     /**
@@ -77,16 +209,16 @@ public final class CatalogueSearch {
      *
      * <p>Called from the asynchronous chat thread.
      *
-     * @return true when the message was taken as a search, and must therefore not be broadcast
+     * @return true when the message was taken as an answer, and must therefore not be broadcast
      */
     public boolean consume(UUID playerId, String message) {
         Objects.requireNonNull(playerId, "playerId");
 
-        Pending request = pending.remove(playerId);
-        if (request == null) {
+        Pending waiting = pending.remove(playerId);
+        if (waiting == null) {
             return false;
         }
-        if (request.expired(Instant.now())) {
+        if (waiting.expired(Instant.now())) {
             announce(playerId, "catalogue-search-expired");
             return false;
         }
@@ -96,35 +228,37 @@ public final class CatalogueSearch {
             scheduler.runSync(() -> {
                 Player player = Bukkit.getPlayer(playerId);
                 if (player != null) {
-                    request.menu().open(player, false);
+                    reopen(waiting.request(), player);
                     renderer.send(player, "catalogue-search-cancelled", true);
                 }
             });
             return true;
         }
 
-        scheduler.runSync(() -> search(playerId, request.menu(), text));
+        scheduler.runSync(() -> answer(playerId, waiting.request(), text));
         return true;
     }
 
-    private void search(UUID playerId, CatalogueMenu menu, String text) {
+    /** Runs one answer on the tick thread, reporting the ones no rule could use. */
+    private void answer(UUID playerId, Request request, String text) {
         Player player = Bukkit.getPlayer(playerId);
         if (player == null) {
             return;
         }
 
-        if (!menu.search(text)) {
-            // Nothing to search for after normalisation (punctuation only, say): the menu is
-            // reopened unchanged rather than showing an empty result for a query nobody made.
-            menu.open(player, true);
-            renderer.send(player, "catalogue-search-blank", true);
-            return;
+        if (!request.accept(player, text, this)) {
+            renderer.send(player, "catalogue-answer-rejected", Map.of("kind", request.kind()), true);
         }
+    }
 
-        menu.open(player, false);
-        renderer.send(player, "catalogue-search-found", Map.of(
-                "query", menu.query(),
-                "count", Integer.toString(menu.resultCount())), true);
+    /** Puts the GUI the prompt came from back on screen, without repeating its click hint. */
+    private void reopen(Request request, Player player) {
+        switch (request) {
+            case SearchRequest(CatalogueMenu menu) -> menu.open(player, false);
+            case AmountRequest(CatalogueMenu menu, Material material) -> menu.open(player, false);
+            case LevelRequest(EnchantPicker picker, Enchantment enchantment, EnchantDraft draft) ->
+                    picker.open(player, draft, null);
+        }
     }
 
     private void announce(UUID playerId, String key) {
@@ -136,7 +270,7 @@ public final class CatalogueSearch {
         });
     }
 
-    private record Pending(CatalogueMenu menu, Instant deadline) {
+    private record Pending(Request request, Instant deadline) {
 
         boolean expired(Instant now) {
             return !now.isBefore(deadline);

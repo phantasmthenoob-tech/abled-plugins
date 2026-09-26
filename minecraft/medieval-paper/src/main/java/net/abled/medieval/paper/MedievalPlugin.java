@@ -5,6 +5,9 @@ import net.abled.medieval.api.MedievalScheduler;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.core.config.MedievalSettings;
+import net.abled.medieval.paper.combat.InfinityConsumablesListener;
+import net.abled.medieval.paper.combat.PiercingShieldListener;
+import net.abled.medieval.paper.combat.QuickChargeAttackSpeedListener;
 import net.abled.medieval.core.config.SettingsLoader;
 import net.abled.medieval.core.deathban.DeathbanPolicy;
 import net.abled.medieval.core.deathban.DeathbanService;
@@ -13,6 +16,7 @@ import net.abled.medieval.core.player.PlayerIdentityService;
 import net.abled.medieval.core.util.TimeFormat;
 import net.abled.medieval.core.world.DimensionAccessService;
 import net.abled.medieval.paper.capability.CapabilityReport;
+import net.abled.medieval.paper.catalogue.CatalogueHandout;
 import net.abled.medieval.paper.catalogue.CatalogueIndex;
 import net.abled.medieval.paper.catalogue.CatalogueListener;
 import net.abled.medieval.paper.catalogue.CatalogueSearch;
@@ -119,8 +123,11 @@ public final class MedievalPlugin extends JavaPlugin {
                 () -> OwnerGate.of(core.settings().admin().secretOwner()), getLogger());
 
         // Chat is the only text input Geyser carries to Bedrock, so the catalogue's search asks in
-        // chat and the answer is captured from the chat event.
-        CatalogueSearch catalogueSearch = new CatalogueSearch(scheduler, renderer);
+        // chat and the answer is captured from the chat event. The handout is the one give-or-drop
+        // path, shared by the menu and the enchantment picker so a full inventory behaves the same
+        // way from either.
+        CatalogueHandout handout = new CatalogueHandout(renderer);
+        CatalogueSearch catalogueSearch = new CatalogueSearch(scheduler, renderer, handout);
 
         // The closest-block search. Its walking happens on one shared tick task rather than one task per
         // search, so ten players searching cost ten slices of a tick, not ten schedulers.
@@ -141,9 +148,21 @@ public final class MedievalPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new DimensionGateListener(dimensions, renderer), this);
         getServer().getPluginManager().registerEvents(
-                new CatalogueListener(renderer, catalogueSearch), this);
+                new CatalogueListener(renderer, catalogueSearch, handout, catalogue, getLogger()), this);
         getServer().getPluginManager().registerEvents(
                 new CatalogueSearchListener(catalogueSearch), this);
+
+        // The combat enchantment rules. Each one reinterprets a vanilla enchantment on the kinds
+        // of item medieval combat uses; each can be turned off individually in config.yml, and
+        // each leaves vanilla behaviour standing when it is. The rules are read through a supplier
+        // of the live settings, so /medieval reload re-arms them without a restart - the same
+        // wiring the deathban policy and the owner gate use.
+        getServer().getPluginManager().registerEvents(
+                new QuickChargeAttackSpeedListener(this, () -> core.settings().combat()), this);
+        getServer().getPluginManager().registerEvents(
+                new PiercingShieldListener(() -> core.settings().combat()), this);
+        getServer().getPluginManager().registerEvents(
+                new InfinityConsumablesListener(() -> core.settings().combat(), scheduler), this);
 
         scheduler.runAsyncRepeating(() -> purgeExpiredBans(deathbans), PURGE_INITIAL_DELAY, PURGE_PERIOD);
 

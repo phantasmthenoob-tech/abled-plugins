@@ -107,7 +107,7 @@ public final class DeathbanPolicy implements MedievalService {
         // a group this class knows nothing about (a convenience constructor here would silently drop
         // the search limits, for one).
         return new MedievalSettings(rules(), base.dimensions(), base.siege(), base.territory(),
-                base.land(), base.admin());
+                base.land(), base.combat(), base.admin());
     }
 
     public boolean isEnabled() {

@@ -43,6 +43,7 @@ minecraft/
 │   ├── MedievalPlatform, BedrockDetector, MedievalScheduler   host abstraction
 │   └── MedievalService, EventBus, kingdom/item value types
 ├── medieval-core/    Version-independent logic + unit tests. Never imports Bukkit.
+│   ├── combat/       MeleeWeapon, Consumable, CombatRules - the combat enchantment decisions
 │   ├── deathban/     DeathbanService, stores, login access rules
 │   ├── storage/      Database, StorageService, migrations, JDBC access layer
 │   ├── player/       PlayerIdentityService + repository
@@ -52,6 +53,7 @@ minecraft/
 │   └── config/ message/ util/ service/ event/
 └── medieval-paper/   Platform adapter. The only module that imports Bukkit.
     ├── compat/       version/platform compatibility layer (PaperScheduler today)
+    ├── combat/       combat enchantment rules: quick charge speed, shield piercing, infinity
     ├── catalogue/    owner item catalogue: registry index, paged chest menu, chat search
     ├── storage/      SQLite bootstrap: URL, driver, pragmas, repositories
     ├── listener/     login gate, deathban, dimension gate, catalogue chat capture
@@ -125,7 +127,7 @@ One plugin artifact serves all of them. Players install nothing.
 
 | File | Purpose |
 | --- | --- |
-| `config.yml` | Gameplay values: deathban, dimensions, siege machines, territory limits, hidden owner tools |
+| `config.yml` | Gameplay values: deathban, dimensions, siege machines, territory limits, combat enchantment rules, hidden owner tools |
 | `messages.yml` | MiniMessage templates; placeholders use `{braces}` |
 
 Both are validated on load. An invalid value is reported in the console with its path and falls
@@ -185,16 +187,18 @@ or looked up.
 row 1  (slots  0- 8)  category tabs: Everything, Building Blocks, Redstone, Tools & Utilities,
                       Combat, Food & Drinks, Ingredients, Spawn Eggs, Admin & Technical
 rows 2-5 (slots 9-44) up to 36 items of the current page
-row 6  (slots 45-53) previous | search | take amount | clear search | page | next | close
-                      (the two glass panes are decoration, and carry no label)
+row 6  (slots 45-53) previous | search | take amount | custom amount | enchant | clear search
+                      | page | next | close
 ```
 
 | Action | Result |
 | --- | --- |
-| Click an item | Takes the amount selected by the **Take amount** button (1, 8, 16, 32, 64) |
+| Click an item | Takes the amount selected by the **Take amount** button (1, 8, 16, 32, 64) — or the chat-typed amount while one is set |
 | Right-click or shift-click an item | Takes a full stack |
 | Take amount button | Cycles 1 → 8 → 16 → 32 → 64 |
-| Click a tab | Switches category, back to page 1 |
+| Custom amount button | Arms chat-amount mode: click an item, type the exact amount, it is handed over at once. While a typed amount is in force the button shows it; clicking it drops the override |
+| Enchant button | Arms enchant mode: click an item to open its enchantment picker |
+| Click a tab | Switches category, back to page 1; disarms both modes |
 | Click the search button | Closes the menu and asks in chat what to search for |
 | Type a query | Shows every matching item, from every tab |
 | Click clear search | Leaves the search and browses the tabs again |
@@ -225,6 +229,19 @@ Details that matter in practice:
   expires after 45 seconds rather than eating a line sent minutes later. A query always runs over
   **Everything** rather than the open tab, because a search that came back empty only for having the
   wrong tab open would look broken.
+- **Amounts can be typed too.** The presets cap out at 64, and a slot cannot hold more anyway, but
+  "57 iron ingots" is a real ask: the custom-amount button arms a mode whose next item click asks
+  for the amount in chat and hands it over immediately. The answer accepts only a plain number and
+  is clamped to the item's stack size, so it can always be delivered as one stack; while a typed
+  amount is in force it overrides the cycled preset for plain clicks (right-/shift-click still means
+  a full stack), and the button shows the number and clears it on the next click.
+- **The enchantment picker.** Arm the enchant button, click any item, and a second GUI opens: every
+  enchantment in the server's registry as its own button, with a live preview of the item being
+  built. Clicking an enchantment asks for its level in chat - a number, a roman numeral (`II`) or a
+  word (`two`), clamped to the enchantment's real maximum. Repeat for as many enchantments as you
+  want, Clear empties the draft, and Done hands over the finished item (dropping any overflow, like
+  every catalogue take). Back returns to the item listing without giving anything. The item given is
+  a clean stack with the chosen enchantments, exactly as an owner `/give` would have produced.
 - **Nothing moves by vanilla rules.** Every click and drag in the menu is cancelled and then
   interpreted, so a catalogue button can never be picked up onto the cursor, hotbar-swapped, or
   dropped with Q; items arrive only through the take path, which decides the amount itself.
@@ -289,6 +306,7 @@ migrations of the phases that implement them, so the schema never advertises dat
 | `/nether open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/end open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/medieval statuscheck` | **owner only** - `admin.secret-owner`, no permission node | implemented |
+| `/medieval statuscheck` enchantment picker | **owner only** - in-menu GUI, no command | implemented |
 
 Commands are registered through Paper's Brigadier API at runtime rather than declared in
 `plugin.yml`, so listing and tab completion follow each branch's `requires` predicate: a sender
@@ -335,8 +353,18 @@ Honest status — nothing below is represented by an interface without an implem
   no stored row follows `config.yml`, and the decision is published on the event bus as
   `DimensionAccessChanged` so events, GUIs and announcements react instead of being wired in.
 - **Owner catalogue, wired end to end**: `/medieval statuscheck` opens a paged, tabbed chest GUI of
-  every item in the server's registry, hands items out, and searches it from a chat prompt; the gate
-  is a name/UUID check (`OwnerGate`) rather than a permission, so other operators cannot use it.
+  every item in the server's registry, hands items out (fixed presets, right-/shift-click full
+  stacks, or a chat-typed exact amount), and searches it from a chat prompt; an enchantment picker
+  builds an enchanted copy of any item from chat-typed levels; the gate is a name/UUID check
+  (`OwnerGate`) rather than a permission, so other operators cannot use it.
+- **Combat enchantment rules, wired end to end**: quick charge on a melee weapon (sword, axe, mace,
+  trident) shortens the attack cooldown through a transient, keyed attack-speed modifier that
+  follows the held item; piercing on those weapons and on crossbow bolts deals damage through a
+  shield by zeroing the event's blocking modifier, so armour and resistance still apply honestly;
+  infinity preserves the item it is on when it is used - food, potions, thrown charges, and the
+  popping totem (its own switch). The decisions live in core (`CombatRules`) and are unit-tested
+  without a server; each rule is individually switchable in `config.yml` under `combat:` and is
+  read through the live settings, so `/medieval reload` re-arms it.
 - **Message keys are checked by the build**: `MessageCatalogueTest` scans the platform sources for
   every message key they ask for and fails, naming them, if `messages.yml` does not define one. A
   missing key is not a crash - it renders as `Missing message: <key>` in place of a button's name -

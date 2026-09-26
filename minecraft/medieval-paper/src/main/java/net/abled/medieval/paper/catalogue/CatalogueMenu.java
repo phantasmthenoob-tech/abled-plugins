@@ -25,7 +25,8 @@ import java.util.Optional;
  * <pre>
  *   row 1 (slots  0- 8)  category tabs - one per {@link CatalogueCategory}, in declaration order
  *   rows 2-5 (slots 9-44) up to 36 items, the current page of the current tab or search
- *   row 6 (slots 45-53)  previous | search | take amount | clear search | page | next | close
+ *   row 6 (slots 45-53)  previous | search | take amount | custom amount | enchant | clear search
+ *                        | page | next | close
  * </pre>
  *
  * <h2>Two modes</h2>
@@ -46,9 +47,10 @@ import java.util.Optional;
  * Bedrock every tap arrives as {@code LEFT}. A tap therefore takes the selected amount, and the
  * Take amount button (1/8/16/32/64) is what lets a touch player take more than one at a time -
  * shift-click is not reachable on touch. Right-click and shift-click still take a full stack for
- * Java players. Searching is typed into chat rather than a sign or anvil, because the sign editor
- * and anvil renaming are exactly the screens Geyser does not carry over. This follows the same rule
- * the rest of the GUI work uses: distinct slots, distinct items, and no click-type trickery.
+ * Java players. Searching, custom amounts and enchantment levels are typed into chat rather than a
+ * sign or anvil, because the sign editor and anvil renaming are exactly the screens Geyser does not
+ * carry over. This follows the same rule the rest of the GUI work uses: distinct slots, distinct
+ * items, and no click-type trickery.
  */
 public final class CatalogueMenu implements InventoryHolder {
 
@@ -63,12 +65,14 @@ public final class CatalogueMenu implements InventoryHolder {
     /** Opens the search prompt; also the button that shows the active query. */
     public static final int SLOT_SEARCH = 46;
     private static final int SLOT_AMOUNT = 47;
+    /** Asks for a take amount in chat; also shows the custom amount while one is in force. */
+    public static final int SLOT_CUSTOM_AMOUNT = 48;
+    /** Arms enchant mode: the next item click opens the enchantment picker instead of taking. */
+    public static final int SLOT_ENCHANT = 49;
     /** Leaves the search and returns to the tab that was open before it. */
-    public static final int SLOT_CLEAR_SEARCH = 48;
-    private static final int SLOT_PAGE = 49;
-    private static final int SLOT_SPACER_ONE = 50;
-    private static final int SLOT_NEXT = 51;
-    private static final int SLOT_SPACER_TWO = 52;
+    public static final int SLOT_CLEAR_SEARCH = 50;
+    private static final int SLOT_PAGE = 51;
+    private static final int SLOT_NEXT = 52;
     private static final int SLOT_CLOSE = 53;
     private static final int NAV_FIRST = 45;
 
@@ -80,7 +84,6 @@ public final class CatalogueMenu implements InventoryHolder {
     private static final String MESSAGE_TAB_SELECTED = "catalogue-tab-selected";
     private static final String MESSAGE_EMPTY = "catalogue-empty";
     private static final String MESSAGE_SEARCH_EMPTY = "catalogue-search-nothing";
-
     /** Hover text. Every visible element explains itself, since a button with only a label is a
      *  guessing game - especially on Bedrock, where the click rules are not the Java ones. */
     private static final String LORE_ITEM = "catalogue-item-lore";
@@ -93,6 +96,11 @@ public final class CatalogueMenu implements InventoryHolder {
     private static final String LORE_NEXT_UNAVAILABLE = "catalogue-no-next-lore";
     private static final String LORE_PAGE = "catalogue-page-lore";
     private static final String LORE_AMOUNT = "catalogue-amount-lore";
+    private static final String LORE_CUSTOM_AMOUNT = "catalogue-custom-amount-lore";
+    private static final String LORE_CUSTOM_AMOUNT_ARMED = "catalogue-custom-amount-armed-lore";
+    private static final String LORE_CUSTOM_AMOUNT_ACTIVE = "catalogue-custom-amount-active-lore";
+    private static final String LORE_ENCHANT = "catalogue-enchant-lore";
+    private static final String LORE_ENCHANT_ARMED = "catalogue-enchant-armed-lore";
     private static final String LORE_SEARCH = "catalogue-search-lore";
     private static final String LORE_SEARCH_ACTIVE = "catalogue-search-active-lore";
     private static final String LORE_SEARCH_CLEAR = "catalogue-search-clear-lore";
@@ -110,6 +118,16 @@ public final class CatalogueMenu implements InventoryHolder {
     /** The active search, or null while browsing. Held normalised, as the matcher compares it. */
     private String query;
     private List<Material> results = List.of();
+
+    /**
+     * A take amount typed into chat, in force until changed. Unlike the cycled preset, a custom
+     * amount is not echoed by the Take amount button - it has its own button showing the number.
+     */
+    private int customAmount = 0;
+    /** True while the next item click should ask for its amount in chat. */
+    private boolean customAmountArmed;
+    /** True while the next item click should open the enchantment picker instead of taking. */
+    private boolean enchantArmed;
 
     public CatalogueMenu(CatalogueIndex index, MessageRenderer renderer) {
         this.index = Objects.requireNonNull(index, "index");
@@ -271,11 +289,80 @@ public final class CatalogueMenu implements InventoryHolder {
         return Optional.of(entries().get(page.fromInclusive() + offset));
     }
 
-    /** How many items a click takes: a plain click takes the selected amount, shift a full stack. */
+    /**
+     * Remembers a take amount typed into chat, until it is changed or the menu is rebuilt.
+     *
+     * @return true when the amount was accepted; false for a value the item rules cannot hand out
+     */
+    public boolean setCustomAmount(int amount) {
+        if (amount < 1) {
+            return false;
+        }
+        this.customAmount = amount;
+        render();
+        return true;
+    }
+
+    /** True while a chat-typed amount is in force, overriding the cycled preset. */
+    public boolean hasCustomAmount() {
+        return customAmount > 0;
+    }
+
+    /** The chat-typed amount, or 0 while none is set. */
+    public int customAmount() {
+        return customAmount;
+    }
+
+    /** Drops a chat-typed amount, returning to the cycled preset. */
+    public void clearCustomAmount() {
+        if (customAmount == 0) {
+            return;
+        }
+        customAmount = 0;
+        render();
+    }
+
+    /** Arms or disarms custom-amount mode: the next item click asks for its amount in chat. */
+    public void setCustomAmountArmed(boolean armed) {
+        this.customAmountArmed = armed;
+        if (armed) {
+            enchantArmed = false;
+        }
+        render();
+    }
+
+    /** True while the next item click should ask for a take amount in chat. */
+    public boolean isCustomAmountArmed() {
+        return customAmountArmed;
+    }
+
+    /** Arms or disarms enchant mode, re-rendering the armed button and the entries' lore. */
+    public void setEnchantArmed(boolean armed) {
+        this.enchantArmed = armed;
+        if (armed) {
+            customAmountArmed = false;
+        }
+        render();
+    }
+
+    /** True while the next item click should open the enchantment picker. */
+    public boolean isEnchantArmed() {
+        return enchantArmed;
+    }
+
+    /**
+     * How many items a click takes.
+     *
+     * <p>A chat-typed amount overrides the cycled preset for plain clicks (right- and shift-click
+     * still take a full stack, because "more than what I typed" is what those have always meant
+     * here). The cap stays the item's own stack size: one click hands out one stack.
+     */
     public int amountFor(ClickType click, Material material) {
         int fullStack = Math.max(1, material.getMaxStackSize());
         return switch (click) {
-            case LEFT -> Math.min(selectedAmount(), fullStack);
+            case LEFT -> hasCustomAmount()
+                    ? Math.min(customAmount, fullStack)
+                    : Math.min(selectedAmount(), fullStack);
             case RIGHT, SHIFT_LEFT, SHIFT_RIGHT -> fullStack;
             // Middle-click clone, number keys, Q-drop, offhand swap, double-click collect and the
             // creative-only path all do nothing here: none of them mean "give me this item".
@@ -340,13 +427,18 @@ public final class CatalogueMenu implements InventoryHolder {
         inventory.setItem(SLOT_PAGE, button(icon("minecraft:book"), "catalogue-page", pagePlaceholders, LORE_PAGE));
         inventory.setItem(SLOT_AMOUNT, button(icon("minecraft:gold_ingot"), "catalogue-amount",
                 Map.of("amount", Integer.toString(selectedAmount())), LORE_AMOUNT));
+        // The custom-amount button is always drawn: while no amount is set it arms the mode that
+        // asks in chat, while one is set it shows the number and clicking it clears the override.
+        inventory.setItem(SLOT_CUSTOM_AMOUNT, hasCustomAmount()
+                ? button(icon("minecraft:sunflower"), "catalogue-custom-amount-active",
+                        Map.of("amount", Integer.toString(customAmount)), LORE_CUSTOM_AMOUNT_ACTIVE)
+                : button(icon("minecraft:gold_nugget"),
+                        customAmountArmed ? "catalogue-custom-amount-armed" : "catalogue-custom-amount",
+                        Map.of(), customAmountArmed ? LORE_CUSTOM_AMOUNT_ARMED : LORE_CUSTOM_AMOUNT));
+        inventory.setItem(SLOT_ENCHANT, enchantArmed
+                ? button(icon("minecraft:enchanted_book"), "catalogue-enchant-armed", Map.of(), LORE_ENCHANT_ARMED)
+                : button(icon("minecraft:enchanted_book"), "catalogue-enchant", Map.of(), LORE_ENCHANT));
         inventory.setItem(SLOT_CLOSE, button(icon("minecraft:barrier"), "catalogue-close", Map.of(), LORE_CLOSE));
-
-        // Decoration only: the navigation bar reads as one strip instead of three loose buttons.
-        // An unnamed pane is conventional in a chest GUI, so it is deliberately given no label.
-        ItemStack spacer = new ItemStack(icon("minecraft:gray_stained_glass_pane"));
-        inventory.setItem(SLOT_SPACER_ONE, spacer);
-        inventory.setItem(SLOT_SPACER_TWO, spacer);
     }
 
     /** The list the current page is a window into: a tab's items, or the search results. */
@@ -374,7 +466,12 @@ public final class CatalogueMenu implements InventoryHolder {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.lore(renderer.renderLines(LORE_ITEM, Map.of("amount", Integer.toString(selectedAmount()))));
+            // In enchant or custom-amount mode the entries' hover text explains what a click now
+            // does; the modes are armed per click, so the lore must follow the state.
+            meta.lore(renderer.renderLines(
+                    enchantArmed ? "catalogue-item-lore-enchant"
+                            : customAmountArmed ? "catalogue-item-lore-amount" : LORE_ITEM,
+                    Map.of("amount", Integer.toString(selectedAmount()))));
             item.setItemMeta(meta);
         }
         return item;

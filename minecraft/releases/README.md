@@ -5,13 +5,11 @@ without building anything or being signed in to GitHub Actions.
 
 | File | Built from |
 | --- | --- |
-| `Medieval-0.1.0-SNAPSHOT.jar` | the `main` commit that added the runtime deathban toggle and the catalogue's chat search |
+| `Medieval-0.1.0-SNAPSHOT.jar` | the `main` commit that added the combat enchantment rules: quick charge that really speeds up a melee attack, piercing that goes through shields, and infinity that preserves consumables |What that jar offers beyond the owner catalogue and the deathban commands (a paged, tabbed chest GUI with a chat-typed search, chat-typed exact amounts, and an enchantment picker; `check|set|clear|list|on|off|toggle|duration|status|reset`): three combat enchantment rules, each switchable in `config.yml` under `combat:` and re-armed by `/medieval reload`.
 
-What that jar's `/medieval statuscheck` offers: a paged, tabbed chest GUI of every item the server
-knows about, with a chat-typed search (`cancel` abandons it), next/previous buttons that dim instead
-of vanishing on the first and last page, and a Take amount button for touch players. What
-`/medieval deathban` offers: `check|set|clear|list` plus `on|off|toggle`, `duration <time>`,
-`status` and `reset` for the rule itself, persisted so a change survives a restart.
+- **Quick charge on a melee weapon** (sword, axe, mace, trident) shortens the attack cooldown by about a tenth per level, capped at nine tenths so no catalogue level turns a blade into a machine gun. Applied as a transient attack-speed attribute modifier, so it never survives a crash and follows the held weapon.
+- **Piercing goes through shields**: an attack from a qualifying weapon, or a piercing crossbow bolt, deals its damage to a blocking defender. Blocking against anything else works exactly as vanilla.
+- **Infinity preserves the item it is on**: a wind charge is not spent when thrown, an ender pearl survives its throw, a golden apple or a steak is not eaten, a potion is not drunk away (bowl, bottle and bucket come back with the stack), and a totem of undying comes back a tick after it pops. Arrows keep their vanilla infinite-bow behaviour.
 
 ## Install
 

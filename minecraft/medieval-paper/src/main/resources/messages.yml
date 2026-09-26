@@ -101,6 +101,13 @@ catalogue-no-previous: "<dark_gray>« Previous page"
 catalogue-no-next: "<dark_gray>Next page »"
 catalogue-page: "<gray>Page <white>{page}</white><gray>/</gray><white>{pages}</white> <dark_gray>({entries} items)"
 catalogue-amount: "<aqua>Take amount <dark_gray>»</dark_gray> <white>{amount}"
+# The custom-amount button: arms the chat prompt while none is set, shows and clears the amount
+# while one is.
+catalogue-custom-amount: "<yellow>Custom amount"
+catalogue-custom-amount-armed: "<green>Custom amount armed</green> <dark_gray>-</dark_gray> <gray>click an item"
+catalogue-custom-amount-active: "<aqua>Amount <dark_gray>»</dark_gray> <white>{amount}</white> <gray>(click to clear)</gray>"
+catalogue-enchant: "<light_purple>Enchant"
+catalogue-enchant-armed: "<green>Enchant armed</green> <dark_gray>-</dark_gray> <gray>click an item"
 catalogue-search: "<yellow>Search"
 catalogue-search-active: "<yellow>Searching <white>{query}</white> <dark_gray>({entries} matches)</dark_gray>"
 catalogue-search-clear: "<red>Clear search"
@@ -111,6 +118,13 @@ catalogue-close: "<red>Close"
 catalogue-item-lore: |-
   <gray>Click to take <white>{amount}</white>
   <gray>Right-click or shift-click for a full stack
+# The same entry while one of the armed modes is waiting for a click.
+catalogue-item-lore-enchant: |-
+  <light_purple>Click to enchant this item
+  <gray>Enchant mode is armed; the enchant button cancels it
+catalogue-item-lore-amount: |-
+  <yellow>Click to choose an amount in chat
+  <gray>Custom amount mode is armed; the amount button cancels it
 catalogue-tab-lore: "<gray>Show <white>{category}</white>."
 catalogue-empty-lore: "<gray>This tab has no items."
 catalogue-search-nothing-lore: |-
@@ -124,6 +138,22 @@ catalogue-page-lore: "<gray>{entries} item(s) in this tab."
 catalogue-amount-lore: |-
   <gray>How many items one click takes.
   <gray>Cycles 1, 8, 16, 32, 64.
+catalogue-custom-amount-lore: |-
+  <gray>Arm this, click an item, and type
+  <gray>the exact amount to take in chat.
+catalogue-custom-amount-armed-lore: |-
+  <green>Armed: click an item</green>
+  <gray>Click again to cancel.
+catalogue-custom-amount-active-lore: |-
+  <gray>Plain clicks take {amount}; a larger typed
+  <gray>amount would be clamped to the stack size.
+  <gray>Click to drop it and follow the cycled preset again.
+catalogue-enchant-lore: |-
+  <gray>Arm this, then click an item to open
+  <gray>the enchantment picker for it.
+catalogue-enchant-armed-lore: |-
+  <green>Armed: click an item</green>
+  <gray>Click again to cancel.
 catalogue-search-lore: "<gray>Type what to search for in chat."
 catalogue-search-active-lore: |-
   <gray>Click to search for something else.
@@ -143,12 +173,67 @@ catalogue-overflow: "<yellow>Your inventory is full, so the rest of the {item} d
 # word that abandons it.
 catalogue-search-prompt: "<yellow>Type what to search for in chat, or <white>{cancel}</white> to stop. You have <white>{timeout}</white>."
 # The prompt timed out and the line was treated as ordinary chat after all.
-catalogue-search-expired: "<gray>That search expired, so your message was sent as normal chat."
-catalogue-search-cancelled: "<gray>Search cancelled."
+catalogue-search-expired: "<gray>That prompt expired, so your message was sent as normal chat."
+catalogue-search-cancelled: "<gray>Cancelled."
 # The answer had nothing left to match on once punctuation and separators were normalised away.
 catalogue-search-blank: "<gray>There was nothing to search for, so the catalogue is unchanged."
 catalogue-search-found: "<green>Found <white>{count}</white> match(es) for <white>{query}</white>.</green>"
 catalogue-search-cleared: "<gray>Search cleared; browsing the tabs again."
+# Sent when an answer parses but no rule can use it - not currently reachable, kept so the
+# catalogue can never render a raw exception at a player.
+catalogue-answer-rejected: "<red>The catalogue could not use that answer ({kind})."
+
+# ---------------------------------------------------------------------------
+# Catalogue custom take amount (armed on the button, answered in chat)
+# ---------------------------------------------------------------------------
+
+catalogue-custom-amount-armed: "<green>Custom amount armed</green> <dark_gray>-</dark_gray> <gray>click the item to take.</gray>"
+catalogue-custom-amount-cleared: "<gray>Custom amount cleared; plain clicks take the cycled preset again."
+# {item} is the clicked item's name, {stack} its stack size, so the ceiling is known up front.
+catalogue-amount-prompt: "<yellow>How many <white>{item}</white> to give? Type a number up to <white>{stack}</white>, or <white>{cancel}</white> to stop. You have <white>{timeout}</white>."
+catalogue-amount-bad: "<red>That is not an amount. Type a plain number, for example <white>16</white>."
+catalogue-amount-given: "<green>Gave <white>{amount}</white> × <white>{item}</white>.</green>"
+
+# ---------------------------------------------------------------------------
+# Enchantment picker (armed from the menu, levels answered in chat)
+# ---------------------------------------------------------------------------
+
+# Inventory title.
+enchant-title: "<dark_gray>Catalogue</dark_gray> <gray>»</gray> <light_purple>Enchant</light_purple>"
+enchant-none: "<gray>No enchantments found."
+enchant-option: "<gray>{enchantment}"
+enchant-set: "<light_purple>{enchantment} <white>{level}</white>"
+enchant-none-lore: "<gray>The server's registry holds no enchantments."
+enchant-option-lore: |-
+  <gray>Click to choose the level in chat
+  <gray>Up to <white>{max}</white> <dark_gray>»</dark_gray> <gray>currently <white>{level}</white>
+enchant-preview-line: "<dark_gray>»</dark_gray> <white>{line}</white>"
+enchant-back: "<yellow>Back to the catalogue"
+enchant-back-lore: "<gray>Return to the item listing without giving anything."
+enchant-previous: "<yellow>« Previous page"
+enchant-next: "<yellow>Next page »"
+enchant-no-previous: "<dark_gray>« Previous page"
+enchant-no-next: "<dark_gray>Next page »"
+enchant-previous-lore: "<gray>Back one page of enchantments."
+enchant-no-previous-lore: "<gray>This is the first page."
+enchant-next-lore: "<gray>Forward one page of enchantments."
+enchant-no-next-lore: "<gray>This is the last page."
+enchant-clear: "<red>Clear</red> <dark_gray>(</dark_gray><white>{count}</white><dark_gray>)</dark_gray>"
+enchant-clear-lore: |-
+  <gray>Empty the draft in place:
+  <gray>every enchantment is taken off the preview.
+enchant-done: "<green>Done</green> <dark_gray>-</dark_gray> <gray>take the item"
+enchant-done-lore: |-
+  <gray>Build the item with the chosen enchantments
+  <gray>and put it in your inventory.
+enchant-level-prompt: "<light_purple>{enchantment}</light_purple> <gray>on the {item}:</gray> <yellow>type a level up to <white>{max}</white>, or <white>{cancel}</white> to stop. You have <white>{timeout}</white>."
+enchant-level-bad: "<red>That is not a level. Type a number, a roman numeral (II) or a word (two), up to <white>{max}</white>."
+enchant-level-set: "<green>{enchantment} set to <white>{level}</white>.</green>"
+enchant-cleared: "<gray>Draft cleared; the preview is the plain item again."
+enchant-finished-lore: |-
+  <dark_gray>Given through the owner catalogue
+  <dark_gray>{item}
+enchant-finished: "<green>Built your <white>{item}</white>.</green>"
 
 # ---------------------------------------------------------------------------
 # Block search (/land search - player-facing, see config.yml land.search)

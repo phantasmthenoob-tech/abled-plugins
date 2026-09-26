@@ -47,6 +47,32 @@ territory:
   # Siege exceptions and administrative overrides are applied by the siege system itself.
   protect-claims: true
 
+# Combat enchantment behaviour. Each rule reinterprets a vanilla enchantment on the kinds of
+# item medieval combat actually uses, and each can be turned off without touching the others.
+# A rule that is switched off leaves vanilla behaviour standing exactly.
+combat:
+  # Quick charge on a melee weapon (sword, axe, mace, trident) makes the attack cooldown
+  # shorter: level I attacks about a quarter sooner, level V about half as long a wait.
+  # The reduction is proportional to the weapon's own speed, so a heavy axe and a quick
+  # sword both benefit. Levels from the owner catalogue beyond the vanilla maximum are
+  # honoured up to a cap so a weapon can never become a machine gun.
+  quick-charge-speeds-melee: true
+
+  # Piercing on a melee weapon or on a crossbow goes through a shield: an attack from a
+  # piercing blade or bolt deals its damage to a defender who is blocking, instead of being
+  # absorbed. Blocking against any other attack works exactly as vanilla.
+  piercing-ignores-shields: true
+
+  # Infinity preserves the item it is on when it is used: a wind charge is not spent when
+  # thrown, a golden apple or steak is not eaten, a potion is not drunk away, a bowl, bottle
+  # or bucket comes back with the stack. Arrows keep their vanilla infinite-bow behaviour.
+  infinity-preserves-consumables: true
+
+  # A totem of undying with infinity comes back after it pops. Separate from the rule above
+  # because a totem is spent in death rather than in use: an owner may want apples to last
+  # while totems stay mortal.
+  infinity-keeps-totem: true
+
 # /land search: find the closest block of a given kind, following the world outwards until one
 # turns up. Nothing here is a permission for that command - see the permission node
 # medieval.command.land for who may use it.

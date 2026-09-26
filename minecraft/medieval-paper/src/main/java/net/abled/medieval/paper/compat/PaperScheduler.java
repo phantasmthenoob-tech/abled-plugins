@@ -58,6 +58,19 @@ public final class PaperScheduler implements MedievalScheduler {
     }
 
     @Override
+    public void runSyncLater(Runnable task, Duration delay) {
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(delay, "delay");
+        // No isPrimaryThread shortcut here: a caller that asks for "later" means later, even from
+        // the tick thread - the whole point is to let the server finish the current action first.
+        try {
+            Bukkit.getScheduler().runTaskLater(plugin, guard(task, "delayed task"), toTicks(delay));
+        } catch (RuntimeException failure) {
+            report("Could not schedule a delayed task on the server thread", failure);
+        }
+    }
+
+    @Override
     public void runAsyncRepeating(Runnable task, Duration initialDelay, Duration period) {
         Objects.requireNonNull(task, "task");
         try {

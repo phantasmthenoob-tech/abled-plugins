@@ -23,6 +23,9 @@ public final class SettingsLoader {
     public static final int DEFAULT_MAX_CLAIMS_PER_KINGDOM = 25;
     public static final String DEFAULT_SECRET_OWNER = MedievalSettings.DEFAULT_SECRET_OWNER;
 
+    /** Seconds one quick-charge level removes from the melee attack cooldown. */
+    public static final double DEFAULT_QUICK_CHARGE_SECONDS_PER_LEVEL = 0.25;
+
     private SettingsLoader() {
     }
 
@@ -50,9 +53,15 @@ public final class SettingsLoader {
 
         MedievalSettings.Land land = new MedievalSettings.Land(search(source, warnings));
 
+        MedievalSettings.Combat combat = new MedievalSettings.Combat(
+                source.getBoolean("combat.quick-charge-speeds-melee", true),
+                source.getBoolean("combat.piercing-ignores-shields", true),
+                source.getBoolean("combat.infinity-preserves-consumables", true),
+                source.getBoolean("combat.infinity-keeps-totem", true));
+
         MedievalSettings.Admin admin = new MedievalSettings.Admin(secretOwner(source, warnings));
 
-        return new MedievalSettings(deathban, dimensions, siege, territory, land, admin);
+        return new MedievalSettings(deathban, dimensions, siege, territory, land, combat, admin);
     }
 
     /**
