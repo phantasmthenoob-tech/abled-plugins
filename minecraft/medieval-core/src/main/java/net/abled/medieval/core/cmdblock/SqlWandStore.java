@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * existing database identical to a fresh install. The statement executes on a real statement
  * handle at construction - a service that silently skipped this step once is a service that
  * cannot be trusted to have created its table at all, which is exactly how the live
- * "unexpected error" happened.
+ * "unexpected error" happened. The save statement is deliberately portable SQL (see SQL_SAVE).
  */
 public final class SqlWandStore {
 
@@ -35,10 +35,11 @@ public final class SqlWandStore {
                 command  TEXT NOT NULL
             )""";
 
-    private static final String SQL_UPSERT = """
-            INSERT INTO cmdblock_wands (id, mode, trigger, command) VALUES (?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET mode = excluded.mode, trigger = excluded.trigger,
-                                         command = excluded.command""";
+    // INSERT OR REPLACE, not the newer ON CONFLICT upsert: this table's key is the full row
+    // identity, so replace-on-conflict is exactly the upsert semantics we want, and the older
+    // form parses on every SQLite version a server's library driver could resolve.
+    private static final String SQL_SAVE = """
+            INSERT OR REPLACE INTO cmdblock_wands (id, mode, trigger, command) VALUES (?, ?, ?, ?)""";
 
     private static final String SQL_FIND = "SELECT mode, trigger, command FROM cmdblock_wands WHERE id = ?";
     private static final String SQL_LIST = "SELECT id, mode, trigger, command FROM cmdblock_wands";
@@ -93,7 +94,7 @@ public final class SqlWandStore {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(binding, "binding");
 
-        database.update(SQL_UPSERT, statement -> {
+        database.update(SQL_SAVE, statement -> {
             statement.setString(1, id.toString());
             statement.setString(2, binding.mode().name());
             statement.setString(3, binding.trigger().name());

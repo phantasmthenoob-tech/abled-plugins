@@ -222,7 +222,10 @@ public final class JdbcDatabase implements Database {
     }
 
     private StorageException failure(String operation, String sql, SQLException cause) {
-        return new StorageException(operation + " failed: " + summarise(sql), cause);
+        // The driver's own message rides along: a StorageException that names only the SQL leaves
+        // the actual SQLite reason (a syntax error, a locked file, a missing table) buried in the
+        // stack trace, which is exactly how the live wand failure stayed undiagnosed.
+        return new StorageException(operation + " failed: " + summarise(sql) + " - " + cause.getMessage(), cause);
     }
 
     private static String summarise(String sql) {
