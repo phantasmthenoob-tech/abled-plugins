@@ -52,7 +52,6 @@ public final class CommandWandCommand {
 
     public static final String LABEL = "cmdblock";
 
-    private static final String ARG_MODE = "mode";
     private static final String ARG_ITEM = "item";
     private static final String ARG_COMMAND = "command";
     private static final String ARG_TRIGGER = "trigger";
@@ -81,26 +80,37 @@ public final class CommandWandCommand {
                 .requires(source -> source.getSender() instanceof Player player
                         && gate.get().allows(player.getUniqueId(), player.getName()))
                 .executes(context -> usage(context.getSource()))
+                // The three modes are keywords, not a free-text argument: that keeps the branch
+                // unambiguous for every client's command parser (a literal and an argument sharing
+                // the name "mode" as siblings broke parsing outright) and puts every option in tab
+                // completion where it can be read instead of memorised.
+                .then(modeBranch("impulse", WandMode.Mode.IMPULSE))
+                .then(modeBranch("repeating", WandMode.Mode.REPEATING))
+                .then(modeBranch("chain", WandMode.Mode.CHAIN))
                 .then(Commands.literal("mode")
-                        .then(Commands.argument(ARG_MODE, StringArgumentType.word())
+                        .then(Commands.argument("wand_mode", StringArgumentType.word())
                                 .suggests(modes())
                                 .executes(context -> switchMode(context.getSource(),
-                                        context.getArgument(ARG_MODE, String.class)))))
+                                        context.getArgument("wand_mode", String.class)))))
                 .then(Commands.literal("trigger")
-                        .then(Commands.argument(ARG_TRIGGER, StringArgumentType.word())
+                        .then(Commands.argument("wand_trigger", StringArgumentType.word())
                                 .suggests(triggers())
                                 .executes(context -> switchTrigger(context.getSource(),
-                                        context.getArgument(ARG_TRIGGER, String.class)))))
-                .then(Commands.argument(ARG_MODE, StringArgumentType.word())
-                        .suggests(modes())
-                        .then(Commands.argument(ARG_ITEM, StringArgumentType.word())
-                                .suggests(items())
-                                .then(Commands.argument(ARG_COMMAND, StringArgumentType.greedyString())
-                                        .executes(context -> bind(
-                                                context.getSource(),
-                                                context.getArgument(ARG_MODE, String.class),
-                                                context.getArgument(ARG_ITEM, String.class),
-                                                context.getArgument(ARG_COMMAND, String.class))))))
+                                        context.getArgument("wand_trigger", String.class)))))
+                .build();
+    }
+
+    /** One make-a-wand branch: {@code /medieval cmdblock <mode> <item> <command>}. */
+    private LiteralCommandNode<CommandSourceStack> modeBranch(String name, WandMode.Mode mode) {
+        return Commands.literal(name)
+                .then(Commands.argument(ARG_ITEM, StringArgumentType.word())
+                        .suggests(items())
+                        .then(Commands.argument(ARG_COMMAND, StringArgumentType.greedyString())
+                                .executes(context -> bind(
+                                        context.getSource(),
+                                        mode,
+                                        context.getArgument(ARG_ITEM, String.class),
+                                        context.getArgument(ARG_COMMAND, String.class)))))
                 .build();
     }
 
@@ -226,17 +236,11 @@ public final class CommandWandCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int bind(CommandSourceStack source, String modeWord, String itemWord, String commandText) {
+    private int bind(CommandSourceStack source, WandMode.Mode mode, String itemWord, String commandText) {
         CommandSender sender = source.getSender();
         if (!(sender instanceof Player player)) {
             // Unreachable through the requires predicate; kept so a future code path cannot hand an
             // item to a sender that has no inventory.
-            return Command.SINGLE_SUCCESS;
-        }
-
-        Optional<WandMode.Mode> mode = WandMode.parse(modeWord);
-        if (mode.isEmpty()) {
-            renderer.send(sender, "cmdblock-bad-mode", Map.of("input", modeWord), true);
             return Command.SINGLE_SUCCESS;
         }
 
@@ -256,13 +260,13 @@ public final class CommandWandCommand {
         }
 
         UUID id = UUID.randomUUID();
-        service.register(id, mode.get(), WandTrigger.Trigger.CLICK, command);
-        handout.give(player, factory.build(id, mode.get(), WandTrigger.Trigger.CLICK, material, command));
+        service.register(id, mode, WandTrigger.Trigger.CLICK, command);
+        handout.give(player, factory.build(id, mode, WandTrigger.Trigger.CLICK, material, command));
 
         renderer.send(sender, "cmdblock-bound", Map.of(
-                "mode", WandMode.displayName(mode.get()),
+                "mode", WandMode.displayName(mode),
                 "command", command), true);
-        logger.info(player.getName() + " bound a " + WandMode.displayName(mode.get())
+        logger.info(player.getName() + " bound a " + WandMode.displayName(mode)
                 + " command wand (" + material.getKey().getKey() + ", id " + id + ") to: " + command);
         return Command.SINGLE_SUCCESS;
     }
