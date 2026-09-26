@@ -237,14 +237,25 @@ public final class CommandWandService {
     /**
      * Runs one command as the console.
      *
+     * <p>On a click, the command is wrapped in {@code execute as <player> at <player> run ...}:
+     * the console keeps its permissions, but the command's executor and position become the
+     * owner, so {@code @s}, {@code ~ ~ ~} and functions that use them resolve to the player who
+     * clicked - the same context a command block gets from {@code execute as @p at @s run ...}.
+     * Dispatched bare, {@code @s} is the console, which is not an entity, so such commands fail
+     * silently. Automated runs (repeating ticks, chain signals) have no clicking player, so they
+     * dispatch with the console as their own context, where entity-relative syntax does not apply.
+     *
      * <p>The trigger player is passed so the result can be reported to them; the command itself
      * never sees them, because the dispatch is the console's, exactly as the catalogue's command
      * runner does. A dispatch that throws is caught and reported - a console command in a repeating
      * wand runs every second, and an exception there must not kill the ticker.
      */
     private void dispatch(String command, Player feedback) {
+        String effective = feedback != null
+                ? "execute as " + feedback.getName() + " at " + feedback.getName() + " run " + command
+                : command;
         try {
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), effective);
         } catch (RuntimeException failure) {
             // The full detail goes to the server log; the player gets the short version.
             warnings.accept("A command wand's dispatch failed for '" + command + "': " + failure);
