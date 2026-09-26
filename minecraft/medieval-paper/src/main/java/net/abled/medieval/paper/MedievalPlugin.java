@@ -8,6 +8,7 @@ import net.abled.medieval.core.config.MedievalSettings;
 import net.abled.medieval.paper.cmdblock.CommandWandFactory;
 import net.abled.medieval.paper.cmdblock.CommandWandListener;
 import net.abled.medieval.paper.cmdblock.CommandWandService;
+import net.abled.medieval.core.cmdblock.SqlWandStore;
 import net.abled.medieval.paper.combat.InfinityConsumablesListener;
 import net.abled.medieval.paper.combat.PiercingShieldListener;
 import net.abled.medieval.paper.combat.QuickChargeAttackSpeedListener;
@@ -139,8 +140,11 @@ public final class MedievalPlugin extends JavaPlugin {
         // listener fires them. The gate is the same live supplier the catalogue command uses, so a
         // changed admin.secret-owner takes effect on /medieval reload here too.
         CommandWandFactory wandFactory = new CommandWandFactory(this, renderer);
-        CommandWandService wandService = new CommandWandService(storage.database(), storage.log(),
-                scheduler, renderer, wandFactory);
+        // The store lives in the core and creates its own table at construction, so the first
+        // binding on a database that predates the feature works without a migration.
+        SqlWandStore wandStore = new SqlWandStore(storage.database(), storage.log());
+        CommandWandService wandService = new CommandWandService(wandStore, scheduler, renderer,
+                wandFactory, message -> getLogger().warning(message));
         wandService.load();
         CommandWandCommand wandCommand = new CommandWandCommand(wandService, wandFactory, handout,
                 renderer, ownerGate, getLogger());

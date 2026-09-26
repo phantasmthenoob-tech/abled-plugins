@@ -8,6 +8,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import net.abled.medieval.core.admin.OwnerGate;
+import net.abled.medieval.core.cmdblock.WandBinding;
 import net.abled.medieval.core.cmdblock.WandMode;
 import net.abled.medieval.core.cmdblock.WandTrigger;
 import net.abled.medieval.paper.catalogue.CatalogueHandout;
@@ -180,7 +181,7 @@ public final class CommandWandCommand {
             return Command.SINGLE_SUCCESS;
         }
 
-        Optional<CommandWandService.Stored> updated = service.setMode(held.get(), mode.get());
+        Optional<WandBinding> updated = service.setMode(held.get(), mode.get());
         if (updated.isEmpty()) {
             renderer.send(sender, "cmdblock-unbound", true);
             return Command.SINGLE_SUCCESS;
@@ -188,7 +189,7 @@ public final class CommandWandCommand {
 
         // The item's label, lore and mode byte must follow the store, or the item lies about what
         // it does.
-        CommandWandService.Stored stored = updated.get();
+        WandBinding stored = updated.get();
         factory.refresh(player.getInventory().getItemInMainHand(),
                 stored.mode(), stored.trigger(), stored.command());
         renderer.send(sender, "cmdblock-mode-set", Map.of(
@@ -215,13 +216,13 @@ public final class CommandWandCommand {
             return Command.SINGLE_SUCCESS;
         }
 
-        Optional<CommandWandService.Stored> updated = service.setTrigger(held.get(), trigger.get());
+        Optional<WandBinding> updated = service.setTrigger(held.get(), trigger.get());
         if (updated.isEmpty()) {
             renderer.send(sender, "cmdblock-unbound", true);
             return Command.SINGLE_SUCCESS;
         }
 
-        CommandWandService.Stored stored = updated.get();
+        WandBinding stored = updated.get();
         factory.refresh(player.getInventory().getItemInMainHand(),
                 stored.mode(), stored.trigger(), stored.command());
         renderer.send(sender, "cmdblock-trigger-set", Map.of(
