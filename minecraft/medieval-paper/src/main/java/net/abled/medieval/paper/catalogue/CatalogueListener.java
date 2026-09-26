@@ -1,5 +1,6 @@
 package net.abled.medieval.paper.catalogue;
 
+import net.abled.medieval.core.catalogue.CatalogueCategory;
 import net.abled.medieval.paper.message.MessageRenderer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -125,9 +126,17 @@ public final class CatalogueListener implements Listener {
             return;
         }
         if (slot == CatalogueMenu.SLOT_CLEAR_SEARCH) {
-            // False while the button is the dimmed "nothing to clear" cell, which is inert by design.
-            if (menu.clearSearch()) {
-                renderer.send(player, "catalogue-search-cleared", true);
+            // The shared sixth slot, decided by the same state the menu rendered it with:
+            // clear-search while a search is open, the command runner on the Admin tab, the
+            // gamemode switcher otherwise.
+            if (menu.isSearching()) {
+                if (menu.clearSearch()) {
+                    renderer.send(player, "catalogue-search-cleared", true);
+                }
+            } else if (menu.category() == CatalogueCategory.ADMIN) {
+                search.promptCommand(player, menu);
+            } else {
+                search.promptGamemode(player, menu);
             }
             return;
         }
@@ -196,7 +205,7 @@ public final class CatalogueListener implements Listener {
         if (slot == EnchantPicker.SLOT_BACK) {
             // The menu the picker came from is not reachable from here; a fresh one on the current
             // tab is the same thing in practice, and the search state was per-menu anyway.
-            new CatalogueMenu(index, renderer).open(player, false);
+            new CatalogueMenu(index, renderer, player).open(player, false);
             return;
         }
         if (slot == EnchantPicker.SLOT_CLEAR) {

@@ -5,6 +5,9 @@ import net.abled.medieval.api.MedievalScheduler;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.core.config.MedievalSettings;
+import net.abled.medieval.paper.cmdblock.CommandWandFactory;
+import net.abled.medieval.paper.cmdblock.CommandWandListener;
+import net.abled.medieval.paper.cmdblock.CommandWandService;
 import net.abled.medieval.paper.combat.InfinityConsumablesListener;
 import net.abled.medieval.paper.combat.PiercingShieldListener;
 import net.abled.medieval.paper.combat.QuickChargeAttackSpeedListener;
@@ -22,6 +25,7 @@ import net.abled.medieval.paper.catalogue.CatalogueListener;
 import net.abled.medieval.paper.catalogue.CatalogueSearch;
 import net.abled.medieval.paper.catalogue.CatalogueSearchListener;
 import net.abled.medieval.paper.command.CatalogueCommand;
+import net.abled.medieval.paper.command.CommandWandCommand;
 import net.abled.medieval.paper.command.DeathbanCommands;
 import net.abled.medieval.paper.command.DimensionCommands;
 import net.abled.medieval.paper.command.LandCommands;
@@ -38,6 +42,7 @@ import net.abled.medieval.paper.storage.PaperStorage;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.time.Duration;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 
 /**
@@ -118,9 +123,9 @@ public final class MedievalPlugin extends JavaPlugin {
         // The hidden owner catalogue. The gate is a supplier so a changed admin.secret-owner takes
         // effect on /medieval reload; the item index is built lazily on the first open, so startup
         // never pays for a listing most restarts are never asked to show.
+        Supplier<OwnerGate> ownerGate = () -> OwnerGate.of(core.settings().admin().secretOwner());
         CatalogueIndex catalogue = new CatalogueIndex();
-        CatalogueCommand catalogueCommands = new CatalogueCommand(catalogue, renderer,
-                () -> OwnerGate.of(core.settings().admin().secretOwner()), getLogger());
+        CatalogueCommand catalogueCommands = new CatalogueCommand(catalogue, renderer, ownerGate, getLogger());
 
         // Chat is the only text input Geyser carries to Bedrock, so the catalogue's search asks in
         // chat and the answer is captured from the chat event. The handout is the one give-or-drop
@@ -128,6 +133,17 @@ public final class MedievalPlugin extends JavaPlugin {
         // way from either.
         CatalogueHandout handout = new CatalogueHandout(renderer);
         CatalogueSearch catalogueSearch = new CatalogueSearch(scheduler, renderer, handout);
+
+        // The owner's command wands: custom fishing rods and carrots-on-a-stick that run console
+        // commands. The factory marks items; the service stores what each marked item runs; the
+        // listener fires them. The gate is the same live supplier the catalogue command uses, so a
+        // changed admin.secret-owner takes effect on /medieval reload here too.
+        CommandWandFactory wandFactory = new CommandWandFactory(this, renderer);
+        CommandWandService wandService = new CommandWandService(storage.database(), storage.log(),
+                scheduler, renderer, wandFactory);
+        wandService.load();
+        CommandWandCommand wandCommand = new CommandWandCommand(wandService, wandFactory, handout,
+                renderer, ownerGate, getLogger());
 
         // The closest-block search. Its walking happens on one shared tick task rather than one task per
         // search, so ten players searching cost ten slices of a tick, not ten schedulers.
@@ -138,7 +154,8 @@ public final class MedievalPlugin extends JavaPlugin {
         new MedievalCommandRegistrar(this, core, renderer,
                 new DeathbanCommands(deathbans, deathbanPolicy, identities, scheduler, renderer, getLogger()),
                 dimensionCommands, catalogueCommands,
-                new LandCommands(blockSearch, renderer, blockSearch::isEnabled))
+                new LandCommands(blockSearch, renderer, blockSearch::isEnabled),
+                wandCommand)
                 .register();
 
         getServer().getPluginManager().registerEvents(
@@ -151,6 +168,11 @@ public final class MedievalPlugin extends JavaPlugin {
                 new CatalogueListener(renderer, catalogueSearch, handout, catalogue, getLogger()), this);
         getServer().getPluginManager().registerEvents(
                 new CatalogueSearchListener(catalogueSearch), this);
+
+        // The command wands. Fired on right-click by the owner; the repeating ticker lives in the
+        // service and was started by its load().
+        getServer().getPluginManager().registerEvents(
+                new CommandWandListener(wandService, wandFactory, ownerGate, renderer), this);
 
         // The combat enchantment rules. Each one reinterprets a vanilla enchantment on the kinds
         // of item medieval combat uses; each can be turned off individually in config.yml, and

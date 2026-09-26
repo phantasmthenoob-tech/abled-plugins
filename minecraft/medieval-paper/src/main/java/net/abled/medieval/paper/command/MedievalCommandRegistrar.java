@@ -44,10 +44,12 @@ public final class MedievalCommandRegistrar {
     private final DimensionCommands dimensionCommands;
     private final CatalogueCommand catalogueCommands;
     private final LandCommands landCommands;
+    private final CommandWandCommand wandCommands;
 
     public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
                                     DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands,
-                                    CatalogueCommand catalogueCommands, LandCommands landCommands) {
+                                    CatalogueCommand catalogueCommands, LandCommands landCommands,
+                                    CommandWandCommand wandCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
@@ -55,6 +57,7 @@ public final class MedievalCommandRegistrar {
         this.dimensionCommands = Objects.requireNonNull(dimensionCommands, "dimensionCommands");
         this.catalogueCommands = Objects.requireNonNull(catalogueCommands, "catalogueCommands");
         this.landCommands = Objects.requireNonNull(landCommands, "landCommands");
+        this.wandCommands = Objects.requireNonNull(wandCommands, "wandCommands");
     }
 
     public void register() {
@@ -73,6 +76,9 @@ public final class MedievalCommandRegistrar {
                             // Not listed in plugin.yml and gated by the configured owner rather
                             // than a permission, so it stays invisible to everyone else.
                             .then(catalogueCommands.node())
+                            // Same owner gate, same invisibility: the branch that binds console
+                            // commands to items is exactly as hidden as the catalogue itself.
+                            .then(wandCommands.node())
                             .build(),
                     "Medieval Era server commands",
                     List.of("med"));
@@ -149,6 +155,10 @@ public final class MedievalCommandRegistrar {
             renderer.send(sender, "help-line",
                     Map.of("command", "medieval " + CatalogueCommand.LABEL,
                             "description", "Open the item catalogue"), false);
+            renderer.send(sender, "help-line",
+                    Map.of("command", "medieval " + CommandWandCommand.LABEL
+                                    + " <mode> <item> <command>",
+                            "description", "Bind a console command to a fishing rod or carrot stick"), false);
         }
         return Command.SINGLE_SUCCESS;
     }

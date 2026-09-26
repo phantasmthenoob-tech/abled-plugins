@@ -187,9 +187,19 @@ or looked up.
 row 1  (slots  0- 8)  category tabs: Everything, Building Blocks, Redstone, Tools & Utilities,
                       Combat, Food & Drinks, Ingredients, Spawn Eggs, Admin & Technical
 rows 2-5 (slots 9-44) up to 36 items of the current page
-row 6  (slots 45-53) previous | search | take amount | custom amount | enchant | clear search
-                      | page | next | close
+row 6  (slots 45-53) previous | search | take amount | custom amount | enchant | gamemode /
+                      clear search / run command | page | next | close
 ```
+
+The sixth slot of the bottom row is shared three ways, by state: while browsing it is the
+**gamemode switcher** — click it, type `1`, `2` or `3` (or `survival`, `creative`, `spectator`) in
+chat, and your gamemode changes, with the catalogue reopening afterwards (spectator cannot reopen
+an inventory, so it only confirms the switch). While the **Admin tab** is open it is the
+**run-command** book-and-quill: click it, type a command in chat (the leading `/` is optional), and
+it is dispatched as the console, with the result echoed back and the catalogue reopened. While a
+search is open the same slot is the **clear search** button, and leaving the search brings the
+previous button back. The share is forced by Bedrock: Geyser translates chest inventories up to 54
+slots, so the menu must not grow a seventh row.
 
 | Action | Result |
 | --- | --- |
@@ -202,6 +212,8 @@ row 6  (slots 45-53) previous | search | take amount | custom amount | enchant |
 | Click the search button | Closes the menu and asks in chat what to search for |
 | Type a query | Shows every matching item, from every tab |
 | Click clear search | Leaves the search and browses the tabs again |
+| Click gamemode (while browsing) | Closes the menu and asks for `1` = survival, `2` = creative, `3` = spectator in chat — the mode's name or `s`/`c`/`sp` also works |
+| Click run command (Admin tab) | Closes the menu and asks for a command in chat, run as the console — the leading `/` is optional, the result is echoed, the menu comes back |
 | Close button | Closes the menu |
 
 Both page buttons are drawn on every page; the one that cannot be used is dimmed and inert rather
@@ -307,6 +319,8 @@ migrations of the phases that implement them, so the schema never advertises dat
 | `/end open|close|status` | `medieval.command.dimension` (default: op) | implemented |
 | `/medieval statuscheck` | **owner only** - `admin.secret-owner`, no permission node | implemented |
 | `/medieval statuscheck` enchantment picker | **owner only** - in-menu GUI, no command | implemented |
+| `/medieval cmdblock <mode> <item> <command>` | **owner only** - `admin.secret-owner`, no permission node | implemented |
+| `/medieval cmdblock mode\|trigger` (switch a held wand) | **owner only** - `admin.secret-owner`, no permission node | implemented |
 
 Commands are registered through Paper's Brigadier API at runtime rather than declared in
 `plugin.yml`, so listing and tab completion follow each branch's `requires` predicate: a sender
@@ -316,6 +330,47 @@ defaults to op so they are not exposed to ordinary players.
 `/medieval statuscheck` is gated the same way but by the configured owner rather than a permission,
 and its help line is only sent to that player - hiding the name is a convenience, not the rule, and
 the check runs on execution regardless.
+
+## Command wands
+
+`/medieval cmdblock <mode> <item> <command>` binds a console command to a custom fishing rod,
+carrot on a stick or warped fungus on a stick, and hands the item over. The item is marked with an
+internal identifier in its PersistentDataContainer, so **only that exact item** activates - a
+vanilla rod, or a copy without the mark, does nothing, and the check never looks at the name, so
+renaming cannot forge it. The item is unbreakable and glinted.
+
+A wand carries **two axes**, exactly like a vanilla command block - how it runs, and what powers it:
+
+| Mode (`/medieval cmdblock mode <mode>`) | Behaviour |
+| --- | --- |
+| `impulse` | With the `click` trigger: the command runs once per right-click. |
+| `repeating` | With the `click` trigger: right-click toggles the wand on or off; while on, the command runs every second (20 ticks), starting on the click that switched it on. The toggle is in memory only, so every restart starts with the wands off. |
+| `chain` | Runs whenever **any** other wand fires or ticks - the emitting wand is the redstone that powers it. Clicking a chain wand directly also fires it. |
+
+| Trigger (`/medieval cmdblock trigger <click|always>`) | Behaviour |
+| --- | --- |
+| `click` | "Needs Redstone": the wand waits for its owner - clicks, toggles, chain signals. This is the default. |
+| `always` | "Always Active": the wand runs by itself on the interval from the moment the server starts, no click and no toggle, in every mode. The state is stored, so it survives restarts - unlike the repeating toggle, which is deliberately session-only. An always-active wand refuses clicks and says so. |
+
+Both subcommands act on the wand held in the main hand, switching it in place - the identity, the
+stored command and the item itself stay; only the label, lore and stored behaviour change.
+Accepts `needs-redstone`/`redstone` as aliases for `click`, and `always-active`/`active` for
+`always`.
+
+Every command works, because the dispatch is the console's (`Bukkit.dispatchCommand`), the same
+path the catalogue's run-command book uses - there is no permission check between the owner's
+click and the server, and the dispatch surfaces in the server log like any console command.
+
+The branch is gated by `admin.secret-owner` exactly like the catalogue: invisible in tab completion
+and command listings to everyone else, checked again on execution, and **not** an op or permission
+check, so it ignores op entirely. Only the owner can fire a wand too: a wand another player picks
+up is inert and does not even announce itself, because advertising "this item runs console
+commands" to whoever holds it would be the vulnerability.
+
+Wand bindings are stored in the SQLite database (`cmdblock_wands` table, created on first use), so
+they survive restarts; the item itself carries only its identity and mode, so re-binding with
+`cmdblock set` needs no new item. Right-click is a normal interact event, which Geyser carries to
+Bedrock clients unchanged, so wands work identically from touch.
 
 The dimension gates are enforced, not merely recorded: while a gate is closed, portal travel into
 that dimension is cancelled for players and for every other entity (a mounted player, a mob, a

@@ -3,8 +3,10 @@ package net.abled.medieval.paper.catalogue;
 import net.abled.medieval.core.catalogue.CatalogueCategory;
 import net.abled.medieval.core.catalogue.CataloguePage;
 import net.abled.medieval.core.catalogue.CatalogueQuery;
+import net.abled.medieval.core.catalogue.GameModes;
 import net.abled.medieval.paper.message.MessageRenderer;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
@@ -25,9 +27,17 @@ import java.util.Optional;
  * <pre>
  *   row 1 (slots  0- 8)  category tabs - one per {@link CatalogueCategory}, in declaration order
  *   rows 2-5 (slots 9-44) up to 36 items, the current page of the current tab or search
- *   row 6 (slots 45-53)  previous | search | take amount | custom amount | enchant | clear search
- *                        | page | next | close
+ *   row 6 (slots 45-53)  previous | search | take amount | custom amount | enchant | gamemode /
+ *                        clear search / run command | page | next | close
  * </pre>
+ *
+ * <p>The sixth slot of the navigation row is shared three ways, by state. While browsing it is the
+ * gamemode switcher; while a search is open it is the clear-search button; while the Admin tab is
+ * open it is the book-and-quill that runs a command typed in chat. Only one state can hold the slot
+ * at a time - a search outranks the Admin tab, so leaving the search returns the command runner -
+ * and the row never changes shape, which is what keeps it readable on Bedrock. Sharing is forced by
+ * Bedrock: Geyser translates chest inventories up to 54 slots, six rows, so the menu must not grow
+ * a seventh row.
  *
  * <h2>Two modes</h2>
  * <em>Browsing</em> shows a tab and its pages. <em>Searching</em> shows the matches for a query and
@@ -104,8 +114,9 @@ public final class CatalogueMenu implements InventoryHolder {
     private static final String LORE_SEARCH = "catalogue-search-lore";
     private static final String LORE_SEARCH_ACTIVE = "catalogue-search-active-lore";
     private static final String LORE_SEARCH_CLEAR = "catalogue-search-clear-lore";
-    private static final String LORE_SEARCH_IDLE = "catalogue-search-idle-lore";
+    private static final String LORE_COMMAND = "catalogue-command-lore";
     private static final String LORE_CLOSE = "catalogue-close-lore";
+    private static final String LORE_GAMEMODE = "catalogue-gamemode-lore";
 
     private final CatalogueIndex index;
     private final MessageRenderer renderer;
@@ -129,9 +140,19 @@ public final class CatalogueMenu implements InventoryHolder {
     /** True while the next item click should open the enchantment picker instead of taking. */
     private boolean enchantArmed;
 
-    public CatalogueMenu(CatalogueIndex index, MessageRenderer renderer) {
+    /**
+     * The holder's gamemode when the menu was opened, shown on the gamemode button.
+     *
+     * <p>Captured once at construction rather than read during render: a menu is built fresh for
+     * each open, so the value is accurate when it matters, and the render path - which has no
+     * player to ask - stays free of per-player state.
+     */
+    private final GameMode currentMode;
+
+    public CatalogueMenu(CatalogueIndex index, MessageRenderer renderer, Player holder) {
         this.index = Objects.requireNonNull(index, "index");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
+        this.currentMode = Objects.requireNonNull(holder, "holder").getGameMode();
         this.inventory = Bukkit.createInventory(this, SIZE, renderer.render(MESSAGE_TITLE));
     }
 
@@ -419,10 +440,15 @@ public final class CatalogueMenu implements InventoryHolder {
                 ? button(icon("minecraft:compass"), "catalogue-search-active",
                         Map.of("query", query, "entries", Integer.toString(results.size())), LORE_SEARCH_ACTIVE)
                 : button(icon("minecraft:compass"), "catalogue-search", Map.of(), LORE_SEARCH));
+        // The shared sixth slot, decided by state: clear-search while a search is open, the book
+        // and quill on the Admin tab, the gamemode switcher otherwise. The row never changes shape.
         inventory.setItem(SLOT_CLEAR_SEARCH, isSearching()
                 ? button(icon("minecraft:red_dye"), "catalogue-search-clear",
                         Map.of("query", query, "entries", Integer.toString(results.size())), LORE_SEARCH_CLEAR)
-                : button(icon("minecraft:structure_void"), "catalogue-search-idle", Map.of(), LORE_SEARCH_IDLE));
+                : category == CatalogueCategory.ADMIN
+                        ? button(icon("minecraft:writable_book"), "catalogue-command", Map.of(), LORE_COMMAND)
+                        : button(icon("minecraft:command_block"), "catalogue-gamemode",
+                                Map.of("current", modeName(currentMode)), LORE_GAMEMODE));
 
         inventory.setItem(SLOT_PAGE, button(icon("minecraft:book"), "catalogue-page", pagePlaceholders, LORE_PAGE));
         inventory.setItem(SLOT_AMOUNT, button(icon("minecraft:gold_ingot"), "catalogue-amount",
@@ -439,6 +465,16 @@ public final class CatalogueMenu implements InventoryHolder {
                 ? button(icon("minecraft:enchanted_book"), "catalogue-enchant-armed", Map.of(), LORE_ENCHANT_ARMED)
                 : button(icon("minecraft:enchanted_book"), "catalogue-enchant", Map.of(), LORE_ENCHANT));
         inventory.setItem(SLOT_CLOSE, button(icon("minecraft:barrier"), "catalogue-close", Map.of(), LORE_CLOSE));
+    }
+
+    /** The server's mode name as the messages print it. */
+    private static String modeName(GameMode mode) {
+        return switch (mode) {
+            case SURVIVAL -> "Survival";
+            case CREATIVE -> "Creative";
+            case SPECTATOR -> "Spectator";
+            case ADVENTURE -> "Adventure";
+        };
     }
 
     /** The list the current page is a window into: a tab's items, or the search results. */

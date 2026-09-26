@@ -70,7 +70,7 @@ public final class CatalogueCommand {
         }
 
         Player player = owner.get();
-        CatalogueMenu menu = new CatalogueMenu(index, renderer);
+        CatalogueMenu menu = new CatalogueMenu(index, renderer, player);
         menu.open(player);
         logger.info(player.getName() + " opened the owner catalogue (" + index.total()
                 + " items, tab " + menu.category().id() + ")");

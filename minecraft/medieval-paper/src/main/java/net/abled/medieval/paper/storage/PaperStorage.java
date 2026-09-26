@@ -9,6 +9,7 @@ import net.abled.medieval.core.storage.DriverManagerConnectionFactory;
 import net.abled.medieval.core.storage.JdbcStorageService;
 import net.abled.medieval.core.storage.Migrations;
 import net.abled.medieval.core.storage.StorageException;
+import net.abled.medieval.core.storage.StorageLog;
 import net.abled.medieval.core.storage.StorageService;
 import net.abled.medieval.core.territory.ClaimRepository;
 import net.abled.medieval.core.world.WorldStateRepository;
@@ -98,6 +99,11 @@ public final class PaperStorage implements AutoCloseable {
                 + " in " + file.getAbsolutePath());
 
         return new PaperStorage(storage, log);
+    }
+
+    /** The storage log, shared with services that store through the same database. */
+    public StorageLog log() {
+        return log;
     }
 
     public Database database() {

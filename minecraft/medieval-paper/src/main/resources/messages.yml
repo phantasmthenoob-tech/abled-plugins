@@ -111,7 +111,6 @@ catalogue-enchant-armed: "<green>Enchant armed</green> <dark_gray>-</dark_gray> 
 catalogue-search: "<yellow>Search"
 catalogue-search-active: "<yellow>Searching <white>{query}</white> <dark_gray>({entries} matches)</dark_gray>"
 catalogue-search-clear: "<red>Clear search"
-catalogue-search-idle: "<dark_gray>Search"
 catalogue-close: "<red>Close"
 
 # Hover text. A multi-line value is allowed here: each line in the file becomes one lore line.
@@ -159,7 +158,6 @@ catalogue-search-active-lore: |-
   <gray>Click to search for something else.
   <gray>Click <white>Clear search</white> to browse the tabs again.
 catalogue-search-clear-lore: "<gray>Leave the search and browse the tabs again."
-catalogue-search-idle-lore: "<gray>There is no search to clear."
 catalogue-close-lore: "<gray>Leave the catalogue."
 # Sent when a take could not all fit in the player's inventory and the rest was dropped.
 catalogue-overflow: "<yellow>Your inventory is full, so the rest of the {item} dropped at your feet."
@@ -193,6 +191,60 @@ catalogue-custom-amount-cleared: "<gray>Custom amount cleared; plain clicks take
 catalogue-amount-prompt: "<yellow>How many <white>{item}</white> to give? Type a number up to <white>{stack}</white>, or <white>{cancel}</white> to stop. You have <white>{timeout}</white>."
 catalogue-amount-bad: "<red>That is not an amount. Type a plain number, for example <white>16</white>."
 catalogue-amount-given: "<green>Gave <white>{amount}</white> × <white>{item}</white>.</green>"
+
+# The gamemode switcher: a button on its own row below the navigation. The answer is typed into
+# chat like every other prompt, so a touch player reaches it exactly as a mouse player does.
+catalogue-gamemode: "<aqua>Gamemode"
+catalogue-gamemode-lore: |-
+  <gray>Switch your gamemode. You are currently in</gray> <white>{current}</white><gray>.</gray>
+  <white>Type</white> <yellow>1</yellow> <gray>for</gray> <white>Survival</white><gray>,</gray> <yellow>2</yellow> <gray>for</gray> <white>Creative</white><gray>,</gray> <yellow>3</yellow> <gray>for</gray> <white>Spectator</white><gray>.</gray>
+  <gray>The answer is typed in chat; the menu comes back afterwards.</gray>
+catalogue-gamemode-prompt: "<yellow>Which gamemode? Type</yellow> <white>1</white> <yellow>for</yellow> <white>Survival</white><yellow>,</yellow> <white>2</white> <yellow>for</yellow> <white>Creative</white><yellow>,</yellow> <white>3</white> <yellow>for</yellow> <white>Spectator</white><yellow>,</yellow> <yellow>or the name instead.</yellow> <gray>You are in</gray> <white>{current}</white><gray>.</gray> <gray>Type</gray> <white>{cancel}</white> <gray>to stop. You have</gray> <white>{timeout}</white><gray>.</gray>"
+catalogue-gamemode-bad: "<red>That is not a gamemode. Type</red> <white>1</white><red>,</red> <white>2</white><red>,</red> <white>3</white><red>,</red> <white>survival</white><red>,</red> <white>creative</white> <red>or</red> <white>spectator</white><red>.</red>"
+catalogue-gamemode-set: "<green>Gamemode switched to</green> <white>{mode}</white><green>.</green>"
+catalogue-gamemode-reopening: "<gray>Reopening the catalogue.</gray>"
+
+# The command runner: the book-and-quill on the Admin tab. The answer is typed in chat and is
+# dispatched as the console, so it is the most powerful prompt the catalogue has - which is why it
+# lives behind the owner gate twice: the menu is only openable by the owner, and the button that
+# arms this prompt is inside that menu.
+catalogue-command: "<light_purple>Run command"
+catalogue-command-lore: |-
+  <gray>Type a command in chat and it is run as the console.</gray>
+  <white>give {name} diamond 64</white> <gray>or</gray> <white>/time set day</white> <gray>- the slash is optional.</gray>
+  <gray>The command is echoed and the menu comes back afterwards.</gray>
+catalogue-command-prompt: "<yellow>Which command should the console run? Type it in chat - the leading</yellow> <white>/</white> <yellow>is optional.</yellow> <gray>Type</gray> <white>{cancel}</white> <gray>to stop. You have</gray> <white>{timeout}</white><gray>.</gray>"
+catalogue-command-run: "<gray>Running</gray> <white>/{command}</white><gray>.</gray>"
+catalogue-command-done: "<green>Console ran</green> <white>/{command}</white><green>.</green>"
+catalogue-command-failed: "<red>The console could not run</red> <white>/{command}</white><red>.</red>"
+catalogue-command-blank: "<red>That is not a command. Type the command, for example</red> <white>time set day</white><red>.</red>"
+
+# ---------------------------------------------------------------------------
+# Command wands (/medieval cmdblock - owner-gated, see CommandWandService)
+# ---------------------------------------------------------------------------
+
+cmdblock-usage: "<gray>Usage:</gray> <white>/medieval cmdblock <mode> <item> <command></white> <gray>- make a wand</gray>\n<white>/medieval cmdblock mode <mode></white> <gray>- switch the held wand (impulse / repeating / chain)</gray>\n<white>/medieval cmdblock trigger <click|always></white> <gray>- needs redstone, or always active</gray>"
+cmdblock-bad-mode: "<red>That is not a mode.</red> <gray>Use</gray> <white>impulse</white><gray>,</gray> <white>repeating</white> <gray>or</gray> <white>chain</white><gray>.</gray>"
+cmdblock-bad-item: "<red>That item cannot be a wand.</red> <gray>Use</gray> <white>fishing_rod</white><gray>,</gray> <white>carrot_on_a_stick</white> <gray>or</gray> <white>warped_fungus_on_a_stick</white><gray>.</gray>"
+cmdblock-blank-command: "<red>The command is empty. Type what the console should run.</red>"
+cmdblock-bound: "<green>Bound a</green> <white>{mode}</white> <green>wand to:</green> <white>{command}</white><green>.</green> <gray>Right-click the item to use it.</gray>"
+cmdblock-name-impulse: "<gold>Command wand</gold> <dark_gray>(impulse)</dark_gray>"
+cmdblock-name-repeating: "<gold>Command wand</gold> <dark_gray>(repeating)</dark_gray>"
+cmdblock-name-chain: "<gold>Command wand</gold> <dark_gray>(chain)</dark_gray>"
+cmdblock-lore: |-
+  <gray>Mode:</gray> <white>{mode}</white> <dark_gray>(</dark_gray><white>{trigger}</white><dark_gray>)</dark_gray>
+  <gray>Runs as the console for its owner.</gray>
+  <gray>Bound to:</gray> <white>{command}</white>
+cmdblock-always-active: "<yellow>This wand is always active - it runs by itself and ignores clicks. Switch it back with</yellow> <white>/medieval cmdblock trigger click</white><yellow>.</yellow>"
+cmdblock-no-wand: "<red>Hold the wand you want to switch in your main hand.</red>"
+cmdblock-bad-trigger: "<red>That is not a trigger.</red> <gray>Use</gray> <white>click</white> <gray>(needs redstone)</gray> <gray>or</gray> <white>always</white> <gray>(always active)</gray><gray>.</gray>"
+cmdblock-mode-set: "<green>Wand switched to</green> <white>{mode}</white><green>.</green>"
+cmdblock-trigger-set: "<green>Wand switched to</green> <white>{trigger}</white><green>.</green>"
+cmdblock-unbound: "<yellow>This wand has no command stored for it anymore.</yellow>"
+cmdblock-repeat-on: "<green>Repeating wand switched</green> <white>on</white><green>.</green>"
+cmdblock-repeat-off: "<gray>Repeating wand switched</gray> <white>off</white><gray>.</gray>"
+cmdblock-dispatched: "<dark_gray>Wand ran</dark_gray> <white>/{command}</white><dark_gray>.</dark_gray>"
+cmdblock-dispatch-failed: "<red>The wand's command could not run; the server log has the detail.</red>"
 
 # ---------------------------------------------------------------------------
 # Enchantment picker (armed from the menu, levels answered in chat)
