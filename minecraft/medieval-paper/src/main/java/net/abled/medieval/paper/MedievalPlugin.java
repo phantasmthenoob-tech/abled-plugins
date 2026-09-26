@@ -5,6 +5,7 @@ import net.abled.medieval.api.MedievalScheduler;
 import net.abled.medieval.core.MedievalCore;
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.core.config.MedievalSettings;
+import net.abled.medieval.paper.cmdblock.CommandBlockGuard;
 import net.abled.medieval.paper.cmdblock.CommandWandFactory;
 import net.abled.medieval.paper.cmdblock.CommandWandListener;
 import net.abled.medieval.paper.cmdblock.CommandWandService;
@@ -177,6 +178,12 @@ public final class MedievalPlugin extends JavaPlugin {
         // service and was started by its load().
         getServer().getPluginManager().registerEvents(
                 new CommandWandListener(wandService, wandFactory, ownerGate, renderer), this);
+
+        // The guarded command block: one the owner placed is stamped with their name, can only be
+        // opened or broken by them, and only runs when the gate says the acting player is the
+        // owner. Shares the same live gate supplier as the wands and the catalogue.
+        getServer().getPluginManager().registerEvents(
+                new CommandBlockGuard(this, ownerGate, renderer), this);
 
         // The combat enchantment rules. Each one reinterprets a vanilla enchantment on the kinds
         // of item medieval combat uses; each can be turned off individually in config.yml, and

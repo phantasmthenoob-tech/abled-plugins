@@ -245,6 +245,7 @@ cmdblock-repeat-on: "<green>Repeating wand switched</green> <white>on</white><gr
 cmdblock-repeat-off: "<gray>Repeating wand switched</gray> <white>off</white><gray>.</gray>"
 cmdblock-dispatched: "<dark_gray>Wand ran</dark_gray> <white>/{command}</white><dark_gray>.</dark_gray>"
 cmdblock-dispatch-failed: "<red>The wand's command could not run; the server log has the detail.</red>"
+cmdblock-guarded: "<red>You cannot use this block.</red>"
 
 # ---------------------------------------------------------------------------
 # Enchantment picker (armed from the menu, levels answered in chat)
