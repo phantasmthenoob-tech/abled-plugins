@@ -183,6 +183,9 @@ public final class MedievalPlugin extends JavaPlugin {
         net.abled.medieval.paper.command.WitherCommand witherCommand =
                 new net.abled.medieval.paper.command.WitherCommand(localMountManager,
                         localSkeletonManager, renderer, ownerGate);
+        // Idle follow: summons trail the owner while the key sword is held, checked through the
+        // same predicate the command uses, so there is one definition of the key.
+        localSkeletonManager.setKeySwordCheck(witherCommand::hasKeySword);
         getServer().getPluginManager().registerEvents(
                 new SummonStorageListener(this, localSkeletonManager, witherCommand::hasKeySword),
                 this);

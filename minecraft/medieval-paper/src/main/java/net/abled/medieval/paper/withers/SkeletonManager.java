@@ -53,6 +53,8 @@ public final class SkeletonManager {
 
     private final Plugin plugin;
     private final WitherSettings settings;
+    /** Whether the owner currently holds the key sword - the follow leash. Set at wiring. */
+    private volatile java.util.function.Predicate<Player> ownerHoldsKey = player -> false;
 
     /** Summoned skeletons per owner. */
     private final Map<UUID, Set<UUID>> ownedSkeletons = new ConcurrentHashMap<>();
@@ -323,6 +325,7 @@ public final class SkeletonManager {
     private void applyTarget(UUID ownerId, Set<UUID> ids) {
         UUID targetId = currentTargets.get(ownerId);
         if (targetId == null) {
+            idleFollow(ownerId, ids);
             return;
         }
         if (!(Bukkit.getEntity(targetId) instanceof LivingEntity target)
@@ -334,6 +337,7 @@ public final class SkeletonManager {
                     summon.setTarget(null);
                 }
             }
+            idleFollow(ownerId, ids);
             return;
         }
         if (settings.targetPersistence()) {
@@ -347,9 +351,57 @@ public final class SkeletonManager {
         }
     }
 
+    /**
+     * While the owner has no target, summons trail them like a held leash - but only while the
+     * owner is on the server holding the key sword. Sheathe it and they stand wherever they are.
+     *
+     * <p>Pathfinding through Paper's {@code Pathfinder.moveTo} keeps their normal walk, jump and
+     * collision; this is a leash, not a teleport. The distance bands stop crowding: summons
+     * ignore the owner inside eight blocks, start walking at twelve, and beyond twenty-four they
+     * teleport so a left-behind skeleton does not spend a minute climbing a hill the owner
+     * jumped off a cliff past.
+     */
+    private void idleFollow(UUID ownerId, Set<UUID> ids) {
+        Player owner = Bukkit.getPlayer(ownerId);
+        if (owner == null || !owner.isOnline()) {
+            return;
+        }
+        if (!ownerHoldsKey.test(owner)) {
+            return;
+        }
+        org.bukkit.Location anchor = owner.getLocation();
+        for (UUID id : ids) {
+            if (!(Bukkit.getEntity(id) instanceof com.destroystokyo.paper.entity.Pathfinder summon)
+                    || !((org.bukkit.entity.Entity) summon).isValid()) {
+                continue;
+            }
+            org.bukkit.Location spot = ((org.bukkit.entity.LivingEntity) summon).getLocation();
+            if (!spot.getWorld().equals(anchor.getWorld())) {
+                // Different world: they cannot path across dimensions, so they come along.
+                summon.stopPathfinding();
+                ((org.bukkit.entity.Entity) summon).teleport(anchor);
+                continue;
+            }
+            double distance = spot.distance(anchor);
+            if (distance < 8.0) {
+                summon.stopPathfinding();
+            } else if (distance < 24.0) {
+                summon.moveTo(anchor, 1.1);
+            } else {
+                summon.stopPathfinding();
+                ((org.bukkit.entity.Entity) summon).teleport(anchor);
+            }
+        }
+    }
+
     /** The key marking a skeleton as summoned, for listeners that identify entities directly. */
     public NamespacedKey summonedKey() {
         return keySummoned;
+    }
+
+    /** Sets the key-sword check used by the idle follow; called once at wiring. */
+    public void setKeySwordCheck(java.util.function.Predicate<Player> check) {
+        this.ownerHoldsKey = Objects.requireNonNull(check, "check");
     }
 
     public NamespacedKey summonerKey() {
