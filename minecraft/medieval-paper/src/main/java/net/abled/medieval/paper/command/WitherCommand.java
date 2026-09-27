@@ -53,7 +53,10 @@ public final class WitherCommand {
     /** The {@code wither} branch, registered as its own top-level command. */
     public LiteralCommandNode<CommandSourceStack> node() {
         return Commands.literal(LABEL)
-                .requires(source -> allowed(source.getSender()))
+                // Only the owner sees the branch; the sword gate runs at execution, where a
+                // failure can explain itself - a hidden command that says nothing when the sword
+                // name is one character off is undiagnosable in game.
+                .requires(source -> senderIsOwner(source.getSender()))
                 .executes(context -> usage(context.getSource()))
                 .then(Commands.literal("ride")
                         .executes(context -> ride(context.getSource(), null))
@@ -82,15 +85,44 @@ public final class WitherCommand {
                 .build();
     }
 
-    /** The full gate: configured owner, holding a sword named Wither's Bane. */
-    private boolean allowed(CommandSender sender) {
+    /** The visibility gate: the configured owner, nothing else. */
+    private boolean senderIsOwner(CommandSender sender) {
         if (sender instanceof Player player) {
-            if (!gate.get().allows(player.getUniqueId(), player.getName())) {
-                return false;
-            }
-            return holdingWithersBane(player);
+            return gate.get().allows(player.getUniqueId(), player.getName());
         }
         return false;
+    }
+
+    /** The execution gate: owner (re-checked) AND holding a sword named Wither's Bane. */
+    private boolean allowed(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            return false;
+        }
+        if (!gate.get().allows(player.getUniqueId(), player.getName())) {
+            return false;
+        }
+        return holdingWithersBane(player);
+    }
+
+    /**
+     * Guards a subcommand: refuses with an explicit message when the sword is missing or
+     * wrongly named, and reports exactly what the held item's name rendered as, so a near-miss
+     * name (a space, a different apostrophe, leftover formatting) is visible instead of silent.
+     */
+    private int checkSword(CommandSourceStack source) {
+        Player player = (Player) source.getSender();
+        if (holdingWithersBane(player)) {
+            return -1;
+        }
+        ItemStack held = player.getInventory().getItemInMainHand();
+        String heldName = held.hasItemMeta() && held.getItemMeta().displayName() != null
+                ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                        .plainText().serialize(held.getItemMeta().displayName())
+                : held.getType().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ');
+        renderer.send(player, "wither-no-sword", Map.of(
+                "expected", SWORD_NAME,
+                "held", heldName.isEmpty() ? "(nothing)" : heldName), true);
+        return Command.SINGLE_SUCCESS;
     }
 
     /** Whether the player's main hand holds a sword whose display name is exactly the key. */
@@ -120,6 +152,9 @@ public final class WitherCommand {
     }
 
     private int ride(CommandSourceStack source, Boolean charged) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         boolean wanted = charged != null ? charged : false;
         if (!mounts.create(player, wanted)) {
@@ -129,6 +164,9 @@ public final class WitherCommand {
     }
 
     private int switchType(CommandSourceStack source, boolean charged) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         if (mounts.mount(player.getUniqueId()).isEmpty()) {
             renderer.send(player, "wither-not-riding", true);
@@ -141,6 +179,9 @@ public final class WitherCommand {
     }
 
     private int toggleType(CommandSourceStack source) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         var mount = mounts.mount(player.getUniqueId());
         if (mount.isEmpty()) {
@@ -154,6 +195,9 @@ public final class WitherCommand {
     }
 
     private int summon(CommandSourceStack source, int amount) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         int spawned = skeletons.summon(player, amount);
         if (spawned <= 0) {
@@ -169,6 +213,9 @@ public final class WitherCommand {
     }
 
     private int dismiss(CommandSourceStack source) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         int removed = skeletons.dismiss(player.getUniqueId());
         renderer.send(player, "wither-dismissed", Map.of(
@@ -177,6 +224,9 @@ public final class WitherCommand {
     }
 
     private int dismissAll(CommandSourceStack source) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         int removed = skeletons.dismissAll();
         renderer.send(player, "wither-dismissed-all", Map.of(
@@ -185,6 +235,9 @@ public final class WitherCommand {
     }
 
     private int targetStatus(CommandSourceStack source) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
         Player player = (Player) source.getSender();
         java.util.UUID targetId = skeletons.currentTarget(player.getUniqueId());
         if (targetId == null) {
