@@ -4,7 +4,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -148,19 +147,16 @@ public final class SkeletonManager {
         return spawned;
     }
 
-    /** Marks an entity as owned and neutral; shared by both summon paths. */
+    /** Marks an entity as owned; shared by both summon paths. */
     private void stamp(Mob entity, UUID ownerId) {
         entity.getPersistentDataContainer().set(keySummoned, PersistentDataType.BYTE, (byte) 1);
         entity.getPersistentDataContainer().set(keySummoner, PersistentDataType.STRING,
                 ownerId.toString());
         entity.setRemoveWhenFarAway(false);
-        // The neutrality mechanism: with the target-finding range at zero, vanilla AI cannot pick
-        // a target of its own. setTarget() from this manager still works - it sets the goal's
-        // target directly, bypassing selection.
-        AttributeInstance range = entity.getAttribute(Attribute.FOLLOW_RANGE);
-        if (range != null) {
-            range.setBaseValue(0.0);
-        }
+        // Neutrality is enforced by the target-event allowlist in WitherListener, not by zeroing
+        // follow range: a zeroed range stops vanilla from picking targets but also stops the
+        // melee goal from pathing to an assigned one - half the skeletons just wandered. Full
+        // range keeps combat behaviour working; the allowlist refuses every uncommanded choice.
     }
 
     /** Removes every summoned creature (skeletons and withers) the player owns. */

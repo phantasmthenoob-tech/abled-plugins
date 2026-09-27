@@ -335,6 +335,9 @@ public final class WitherMountManager {
         seat.setPitch(0.0f);
         seat.add(velocity.getX(), velocity.getY(), velocity.getZ());
         vehicle.teleport(seat);
+        // Matching velocity lets the client interpolate between teleports instead of snapping,
+        // which is what made the ride read as jumpy flight rather than a mount.
+        vehicle.setVelocity(velocity);
 
         // The skull rides exactly on the control stand. The stand is invisible, so the skull is
         // the thing the player sees beneath them - inside it, at the eye line of a rider.
@@ -343,6 +346,7 @@ public final class WitherMountManager {
         skullSpot.setPitch(eye.getPitch() * 0.5f);
         skull.setRotation(skullSpot.getYaw(), skullSpot.getPitch());
         skull.teleport(skullSpot);
+        skull.setVelocity(velocity);
     }
 
     /**
