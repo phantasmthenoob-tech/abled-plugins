@@ -78,8 +78,12 @@ public final class CommandWandCommand {
     /** The {@code cmdblock} branch, to be attached under {@code /medieval}. */
     public LiteralCommandNode<CommandSourceStack> node() {
         return Commands.literal(LABEL)
+                // The console is an owner tool just like the owner player: it may bind wands (the
+                // item is dropped at the main world's spawn for pickup) and read the usage. The
+                // held-wand subcommands answer with "no wand", since the console has no hands.
                 .requires(source -> source.getSender() instanceof Player player
-                        && gate.get().allows(player.getUniqueId(), player.getName()))
+                        ? gate.get().allows(player.getUniqueId(), player.getName())
+                        : gate.get().isConfigured())
                 .executes(context -> usage(context.getSource()))
                 // The three modes are keywords, not a free-text argument: that keeps the branch
                 // unambiguous for every client's command parser (a literal and an argument sharing
@@ -117,7 +121,10 @@ public final class CommandWandCommand {
 
     /** True when this sender may use the wand commands; used by the help listing. */
     public boolean isOwner(CommandSender sender) {
-        return sender instanceof Player player && gate.get().allows(player.getUniqueId(), player.getName());
+        if (!(sender instanceof Player player)) {
+            return gate.get().isConfigured();
+        }
+        return gate.get().allows(player.getUniqueId(), player.getName());
     }
 
     private SuggestionProvider<CommandSourceStack> modes() {
@@ -175,6 +182,10 @@ public final class CommandWandCommand {
             renderer.send(sender, "cmdblock-bad-mode", Map.of("input", modeWord), true);
             return Command.SINGLE_SUCCESS;
         }
+        if (!(sender instanceof Player)) {
+            renderer.send(sender, "cmdblock-no-wand", true);
+            return Command.SINGLE_SUCCESS;
+        }
         Optional<UUID> held = heldWand(player);
         if (held.isEmpty()) {
             renderer.send(sender, "cmdblock-no-wand", true);
@@ -210,6 +221,10 @@ public final class CommandWandCommand {
             renderer.send(sender, "cmdblock-bad-trigger", Map.of("input", triggerWord), true);
             return Command.SINGLE_SUCCESS;
         }
+        if (!(sender instanceof Player)) {
+            renderer.send(sender, "cmdblock-no-wand", true);
+            return Command.SINGLE_SUCCESS;
+        }
         Optional<UUID> held = heldWand(player);
         if (held.isEmpty()) {
             renderer.send(sender, "cmdblock-no-wand", true);
@@ -240,9 +255,7 @@ public final class CommandWandCommand {
     private int bind(CommandSourceStack source, WandMode.Mode mode, String itemWord, String commandText) {
         CommandSender sender = source.getSender();
         if (!(sender instanceof Player player)) {
-            // Unreachable through the requires predicate; kept so a future code path cannot hand an
-            // item to a sender that has no inventory.
-            return Command.SINGLE_SUCCESS;
+            return bindForConsole(sender, mode, itemWord, commandText);
         }
 
         Material material = Material.matchMaterial(itemWord);
@@ -269,6 +282,45 @@ public final class CommandWandCommand {
                 "command", command), true);
         logger.info(player.getName() + " bound a " + WandMode.displayName(mode)
                 + " command wand (" + material.getKey().getKey() + ", id " + id + ") to: " + command);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Binds a wand from the console, where the sender has no inventory to hold the item.
+     *
+     * <p>The binding is stored exactly as a player-made one, and the physical wand is dropped at
+     * the main world's spawn, so whoever picks it up is holding a fully armed item. The log line
+     * says where it was dropped - an owner scripting this wants to know the wand is lying in the
+     * spawn chunks, not silently existing only as a database row.
+     */
+    private int bindForConsole(CommandSender sender, WandMode.Mode mode, String itemWord, String commandText) {
+        Material material = Material.matchMaterial(itemWord);
+        if (material == null || !CommandWandFactory.isWandMaterial(material)) {
+            renderer.send(sender, "cmdblock-bad-item", Map.of("input", itemWord), true);
+            return Command.SINGLE_SUCCESS;
+        }
+
+        String command = commandText.trim();
+        if (command.startsWith("/")) {
+            command = command.substring(1);
+        }
+        if (command.isBlank()) {
+            renderer.send(sender, "cmdblock-blank-command", true);
+            return Command.SINGLE_SUCCESS;
+        }
+
+        UUID id = UUID.randomUUID();
+        service.register(id, mode, WandTrigger.Trigger.CLICK, command);
+        var world = org.bukkit.Bukkit.getWorlds().getFirst();
+        world.dropItem(world.getSpawnLocation(),
+                factory.build(id, mode, WandTrigger.Trigger.CLICK, material, command));
+
+        renderer.send(sender, "cmdblock-bound", Map.of(
+                "mode", WandMode.displayName(mode),
+                "command", command), true);
+        logger.info("Console bound a " + WandMode.displayName(mode)
+                + " command wand (" + material.getKey().getKey() + ", id " + id + ") to: " + command
+                + " - the item was dropped at the " + world.getName() + " spawn");
         return Command.SINGLE_SUCCESS;
     }
 }
