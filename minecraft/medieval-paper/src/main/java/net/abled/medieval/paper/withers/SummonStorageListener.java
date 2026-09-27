@@ -49,9 +49,15 @@ import java.util.UUID;
  */
 public final class SummonStorageListener implements Listener {
 
-    /** Storage slots per summon: withers get a bigger saddlebag than skeletons. */
-    private static final int SKELETON_BAG_SLOTS = 15;
+    // Storage slots per summon. Chest inventories must be a multiple of nine slots, so the total
+    // is the equipment row (9, padded with three inert slots after the six real ones) plus whole
+    // rows of bag: two rows for a skeleton, three for a wither. 21 and 33 - the honest sums -
+    // throw at createInventory, which is why the GUI silently never opened.
+    private static final int SKELETON_BAG_SLOTS = 18;
     private static final int WITHER_BAG_SLOTS = 27;
+
+    /** The three padding slots after the six equipment slots; visually inert, clicks ignored. */
+    private static final int PAD_SLOTS = 3;
 
     /** Equipment row is always six slots: helmet, chest, legs, boots, weapon, off-hand. */
     private static final int EQUIPMENT_SLOTS = 6;
@@ -108,7 +114,7 @@ public final class SummonStorageListener implements Listener {
 
         Inventory inventory = Bukkit.createInventory(
                 new SummonBagHolder(clicked.getUniqueId(), bagSlots),
-                EQUIPMENT_SLOTS + bagSlots,
+                EQUIPMENT_SLOTS + PAD_SLOTS + bagSlots,
                 net.kyori.adventure.text.Component.text(title));
 
         // Top row: the creature's live equipment.
@@ -142,8 +148,12 @@ public final class SummonStorageListener implements Listener {
             return;
         }
         int slot = event.getSlot();
+        if (slot >= EQUIPMENT_SLOTS && slot < EQUIPMENT_SLOTS + PAD_SLOTS) {
+            event.setCancelled(true); // The padding after the equipment row holds nothing, ever.
+            return;
+        }
         if (slot < 0 || slot >= EQUIPMENT_SLOTS) {
-            return; // The bag row behaves like any chest.
+            return; // The bag rows behave like any chest.
         }
         // The cursor item is what would land there on a place/swap click.
         ItemStack wouldPlace = event.getCursor();
