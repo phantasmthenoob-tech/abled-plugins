@@ -249,16 +249,31 @@ public final class CommandWandService {
      * never sees them, because the dispatch is the console's, exactly as the catalogue's command
      * runner does. A dispatch that throws is caught and reported - a console command in a repeating
      * wand runs every second, and an exception there must not kill the ticker.
+     *
+     * <p>A dispatch that vanilla <em>rejects</em> (an unknown command, a failed {@code execute}
+     * selector, a name that resolves to nobody) returns false without throwing. That is reported
+     * too, both to the log and to the clicking player - the alternative is a wand that appears to
+     * do nothing, which is indistinguishable from a dead one.
      */
     private void dispatch(String command, Player feedback) {
         String effective = feedback != null
                 ? "execute as " + feedback.getName() + " at " + feedback.getName() + " run " + command
                 : command;
+        boolean accepted;
         try {
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), effective);
+            accepted = Bukkit.dispatchCommand(Bukkit.getConsoleSender(), effective);
         } catch (RuntimeException failure) {
             // The full detail goes to the server log; the player gets the short version.
             warnings.accept("A command wand's dispatch failed for '" + command + "': " + failure);
+            if (feedback != null) {
+                renderer.send(feedback, "cmdblock-dispatch-failed", true);
+            }
+            return;
+        }
+        if (!accepted) {
+            // Vanilla refused the command without an exception. The log carries the effective line,
+            // so a wrapping mistake (execute as <name> against an offline player, say) is visible.
+            warnings.accept("A command wand's dispatch was rejected by the server: " + effective);
             if (feedback != null) {
                 renderer.send(feedback, "cmdblock-dispatch-failed", true);
             }

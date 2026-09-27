@@ -2,6 +2,7 @@ package net.abled.medieval.paper.cmdblock;
 
 import net.abled.medieval.core.admin.OwnerGate;
 import net.abled.medieval.paper.message.MessageRenderer;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
@@ -36,11 +37,9 @@ import java.util.function.Supplier;
  *   <li>{@code PlayerInteractEvent}: a marked block can only be opened (its GUI) by the owner.
  *       The GUI is where the command is typed, so whoever can open it can reprogram it - the
  *       gate has to sit there, not just on the redstone. A marked block also cannot be broken by
- *       another player, so a stolen command block cannot be picked apart off-world either.</li>
- *   <li>{@code BlockRedstoneEvent}: when a marked block is about to fire, the activating player
- *       is checked. Redstone arrives without a player (a clock, a hopper timer), so a marked
- *       block with nobody to vouch for it simply does not run - the redstone path is the owner's
- *       click, a button they pressed, a lever they threw, or a command from the wand system.</li>
+ *       another player, so a stolen command block cannot be picked apart off-world either.</li>     *       <li>{@code BlockRedstoneEvent}: a marked block only accepts redstone while its owner
+     *       is online. A signal arriving while they are away cannot be theirs, so it is refused;
+     *       while they are on, their own buttons, levers and clocks all work.</li>
  * </ul>
  *
  * <h2>Why the mark is the owner name, not the player UUID</h2>
@@ -105,24 +104,26 @@ public final class CommandBlockGuard implements Listener {
     }
 
     /**
-     * A marked command block only fires for its owner.
+     * A marked command block only fires while its owner is online.
      *
-     * <p>{@code BlockRedstoneEvent} has no player, so "the owner powered it" cannot be verified
-     * directly; instead a marked block requires that the owner is the one online and acting at
-     * that moment - a redstone signal with no owner behind it is cancelled. The wand system is
-     * the scripted path: a wand chain that needs a timed block should use a wand, not a buried
-     * command block clock.
+     * <p>{@code BlockRedstoneEvent} has no player, so "the owner pressed this button" cannot be
+     * verified directly - and refusing every signal made the owner's own buttons dead too, which
+     * read in game as "the block does not work". The rule instead is presence: a marked block
+     * fires for any redstone, but only while the owner who placed it is on the server. An owner
+     * who is online is around to see what their contraptions do; a signal arriving while they are
+     * away cannot be theirs, so it is refused.
      */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onRedstone(BlockRedstoneEvent event) {
         if (event.getNewCurrent() <= 0 || !isGuarded(event.getBlock())) {
             return;
         }
-        // No player context exists on a redstone event: the signal could have come from the
-        // owner's button, a mob, a clock, or another block. The safe answer for a marked block
-        // is to refuse everything that is not a direct activation, which the interact listener
-        // has already let through only for the owner.
-        event.setNewCurrent(0);
+        String owner = ownerOf(event.getBlock());
+        if (owner == null || Bukkit.getPlayerExact(owner) == null) {
+            // The stamp proves the block was owner-placed; if the owner is not online now, this
+            // signal cannot be theirs. The interact listener still guards the GUI and breaking.
+            event.setNewCurrent(0);
+        }
     }
 
     private boolean isGuarded(Block block) {
@@ -136,5 +137,14 @@ public final class CommandBlockGuard implements Listener {
             return false;
         }
         return commandBlock.getPersistentDataContainer().has(keyOwner, PersistentDataType.STRING);
+    }
+
+    /** The stamped owner name of a command block, or null when it carries no mark. */
+    private String ownerOf(Block block) {
+        BlockState state = block.getState();
+        if (!(state instanceof CommandBlock commandBlock)) {
+            return null;
+        }
+        return commandBlock.getPersistentDataContainer().get(keyOwner, PersistentDataType.STRING);
     }
 }
