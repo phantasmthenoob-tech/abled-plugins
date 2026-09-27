@@ -112,3 +112,41 @@ admin:
   #
   # Change this before opening the server to the public.
   secret-owner: "Disgraced_"
+
+# ---------------------------------------------------------------------------
+# Wither systems (/wither): rideable wither skulls and owner-bound skeletons
+# ---------------------------------------------------------------------------
+
+withers:
+  mount:
+    # Horizontal speed cap in blocks per tick for each skull type. 1.5 is a fast glide - roughly
+    # three times walking pace per tick - without becoming a projectile.
+    normal-speed: 1.5
+    charged-speed: 1.5
+    # Vertical speed cap in blocks per tick; space climbs, shift dives.
+    vertical-speed: 1.2
+    # How fast the mount approaches your commanded velocity each tick, 0..1. Higher feels snappy,
+    # lower feels heavy. 0.20 ramps in over about five ticks.
+    acceleration: 0.20
+    # Velocity kept each tick, 0..1. Lower is draggier; 0.85 coasts for about a second after you
+    # let go of the keys.
+    drag: 0.85
+    # Explosion yields in block radii, like TNT power. Vanilla wither skulls are power 1.
+    normal-explosion-power: 1.0
+    charged-explosion-power: 2.0
+    # Whether a mount skull explodes at all when it hits something. Flying into terrain with this
+    # off is harmless; with it on, mind where you park.
+    collision-explosion: true
+  skeletons:
+    # Hard cap on skeletons one player may have alive at once.
+    max-per-player: 20
+    # When true, skeletons keep attacking your last target until it dies; when false they stand
+    # down after the first hit.
+    target-persistence: true
+    # Summoned skeletons can never damage their owner. Leave this on.
+    owner-immunity: true
+    # Whether one owner's skeletons may hurt each other.
+    friendly-fire-between-owned: false
+  effects:
+    # Smoke burst when a mount is created.
+    mount-particles: true

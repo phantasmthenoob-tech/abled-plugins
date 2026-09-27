@@ -45,3 +45,15 @@ permissions:
   medieval.command.land:
     description: Allows finding the closest block of a kind with /land.
     default: true
+
+  # The wither systems (/wither). Both commands check the configured admin.secret-owner as well,
+  # so granting these alone does not open the branch to staff.
+  ridewither.use:
+    description: Allows riding a wither skull with /wither ride.
+    default: false
+  ridewither.summon:
+    description: Allows summoning owned wither skeletons with /wither summon.
+    default: false
+  ridewither.admin:
+    description: Allows /wither dismissall.
+    default: op

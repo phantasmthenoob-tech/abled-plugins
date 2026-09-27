@@ -304,3 +304,22 @@ land-search-timed-out: "<yellow>Gave up after {elapsed} without finding <white>{
 land-search-stopped-early: "<yellow>Gave up after {elapsed}. The nearest <white>{block}</white> so far is at <white>{x}, {y}, {z}</white></yellow> <gray>- {distance} block(s) away, but the search did not finish, so a closer one may exist.</gray>"
 land-search-cancelled: "<gray>Search stopped after <white>{chunks}</white> chunk(s) read and <white>{elapsed}</white>."
 land-search-nothing-running: "<gray>You have no search running. Start one with <white>/land search <block></white>."
+
+# ---------------------------------------------------------------------------
+# Wither systems (/wither - rideable skulls and owned skeletons)
+# ---------------------------------------------------------------------------
+
+wither-usage: "<gray>Usage: <white>/wither ride [normal|charged]</white>, <white>/wither mount <normal|charged|toggle></white>, <white>/wither summon [amount]</white>, <white>/wither dismiss</white>, <white>/wither target</white>."
+wither-ride-normal: "<green>A wither skull rises under you. W to fly, space up, shift down."
+wither-ride-charged: "<dark_aqua>A charged wither skull rises under you. W to fly, space up, shift down."
+wither-already-riding: "<yellow>You are already riding a wither skull."
+wither-not-riding: "<yellow>You are not riding a wither skull."
+wither-type-charged: "<dark_aqua>The skull turns blue - charged."
+wither-type-normal: "<gray>The skull fades back to black - normal."
+wither-dismounted: "<gray>The skull disperses."
+wither-summoned: "<green>{count} wither skeleton(s) rise. {total} under your command."
+wither-summon-capped: "<yellow>No skeletons summoned - you already command {count} of {max}."
+wither-dismissed: "<gray>{count} skeleton(s) return to dust."
+wither-dismissed-all: "<gray>{count} skeleton(s) across every owner return to dust."
+wither-target-none: "<gray>The skeletons await your strike - attack something to aim them."
+wither-target-current: "<gray>The skeletons hunt <white>{target}</white>."

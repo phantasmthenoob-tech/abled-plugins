@@ -40,7 +40,12 @@ import net.abled.medieval.paper.listener.DimensionGateListener;
 import net.abled.medieval.paper.listener.LoginGateListener;
 import net.abled.medieval.paper.message.MessageRenderer;
 import net.abled.medieval.paper.message.PaperMessageSource;
+import net.abled.medieval.paper.command.WitherCommand;
 import net.abled.medieval.paper.storage.PaperStorage;
+import net.abled.medieval.paper.withers.SkeletonManager;
+import net.abled.medieval.paper.withers.WitherListener;
+import net.abled.medieval.paper.withers.WitherMountManager;
+import net.abled.medieval.paper.withers.WitherSettings;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.time.Duration;
@@ -72,6 +77,8 @@ public final class MedievalPlugin extends JavaPlugin {
     private PaperStorage storage;
     private DimensionAccessService dimensions;
     private DeathbanPolicy deathbanPolicy;
+    private WitherMountManager mountManager;
+    private SkeletonManager skeletonManager;
 
     @Override
     public void onEnable() {
@@ -155,12 +162,26 @@ public final class MedievalPlugin extends JavaPlugin {
         BlockSearchService blockSearch = new BlockSearchService(scheduler, renderer, core::settings, getLogger());
         blockSearch.start();
 
+        // The wither systems: rideable skulls over an invisible control stand, and wither
+        // skeletons that fight whatever their owner strikes. One settings block, two managers,
+        // one listener; the owners' mounts and skeletons are torn down on disable below.
+        WitherSettings witherSettings = WitherSettings.load(getConfig());
+        WitherMountManager localMountManager = new WitherMountManager(this, witherSettings, renderer,
+                message -> getLogger().warning(message));
+        SkeletonManager localSkeletonManager = new SkeletonManager(this, witherSettings);
+        this.mountManager = localMountManager;
+        this.skeletonManager = localSkeletonManager;
+        localMountManager.start();
+        localSkeletonManager.start();
+        getServer().getPluginManager().registerEvents(
+                new WitherListener(this, localMountManager, localSkeletonManager), this);
+
         DimensionCommands dimensionCommands = new DimensionCommands(dimensions, scheduler, renderer, getLogger());
         new MedievalCommandRegistrar(this, core, renderer,
                 new DeathbanCommands(deathbans, deathbanPolicy, identities, scheduler, renderer, getLogger()),
                 dimensionCommands, catalogueCommands,
                 new LandCommands(blockSearch, renderer, blockSearch::isEnabled),
-                wandCommand)
+                wandCommand, new WitherCommand(localMountManager, localSkeletonManager, renderer, ownerGate))
                 .register();
 
         getServer().getPluginManager().registerEvents(
@@ -229,6 +250,14 @@ public final class MedievalPlugin extends JavaPlugin {
         // Order matters: stop background work, then the services, then storage. Closing storage
         // waits for a statement that is already running, so shutting down during a write cannot
         // leave a half-written transaction behind.
+        if (mountManager != null) {
+            mountManager.shutdown();
+            mountManager = null;
+        }
+        if (skeletonManager != null) {
+            skeletonManager.shutdown();
+            skeletonManager = null;
+        }
         if (scheduler != null) {
             scheduler.cancelRepeating();
             scheduler = null;

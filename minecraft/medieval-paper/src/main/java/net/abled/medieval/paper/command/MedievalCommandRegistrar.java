@@ -45,11 +45,12 @@ public final class MedievalCommandRegistrar {
     private final CatalogueCommand catalogueCommands;
     private final LandCommands landCommands;
     private final CommandWandCommand wandCommands;
+    private final WitherCommand witherCommands;
 
     public MedievalCommandRegistrar(MedievalPlugin plugin, MedievalCore core, MessageRenderer renderer,
                                     DeathbanCommands deathbanCommands, DimensionCommands dimensionCommands,
                                     CatalogueCommand catalogueCommands, LandCommands landCommands,
-                                    CommandWandCommand wandCommands) {
+                                    CommandWandCommand wandCommands, WitherCommand witherCommands) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.core = Objects.requireNonNull(core, "core");
         this.renderer = Objects.requireNonNull(renderer, "renderer");
@@ -58,6 +59,7 @@ public final class MedievalCommandRegistrar {
         this.catalogueCommands = Objects.requireNonNull(catalogueCommands, "catalogueCommands");
         this.landCommands = Objects.requireNonNull(landCommands, "landCommands");
         this.wandCommands = Objects.requireNonNull(wandCommands, "wandCommands");
+        this.witherCommands = Objects.requireNonNull(witherCommands, "witherCommands");
     }
 
     public void register() {
@@ -95,6 +97,11 @@ public final class MedievalCommandRegistrar {
             // /medieval. Toggle it with land.search.enabled or the permission node.
             commands.register(landCommands.node(),
                     "Find the closest block of a kind", List.of());
+
+            // The wither systems: gated by the configured owner AND a held sword named
+            // "Wither's Bane", so the branch only exists for the key-holder.
+            commands.register(witherCommands.node(),
+                    "Ride wither skulls and command owned wither skeletons", List.of());
         });
     }
 
