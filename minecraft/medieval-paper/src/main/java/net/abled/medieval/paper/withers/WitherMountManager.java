@@ -344,9 +344,14 @@ public final class WitherMountManager {
         Location skullSpot = seat.clone();
         skullSpot.setYaw(eye.getYaw());
         skullSpot.setPitch(eye.getPitch() * 0.5f);
-        skull.setRotation(skullSpot.getYaw(), skullSpot.getPitch());
         skull.teleport(skullSpot);
-        skull.setVelocity(velocity);
+        skull.setRotation(skullSpot.getYaw(), skullSpot.getPitch());
+        // A fireball's direction IS its velocity on the client: without this the projectile's
+        // motion vector pointed where it spawned from, and the client-rendered skull slid ahead
+        // of its true position along that old direction each tick - the "skull 5 blocks in front
+        // of me" effect. Zero acceleration stops the physics from adding more on top.
+        skull.setDirection(velocity);
+        skull.setAcceleration(new Vector(0, 0, 0));
     }
 
     /**

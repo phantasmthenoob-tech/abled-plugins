@@ -4,7 +4,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Wither;
 import org.bukkit.entity.WitherSkeleton;
@@ -13,6 +12,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.EquipmentSlot;
@@ -41,10 +41,11 @@ import java.util.UUID;
  * encoding vanilla uses for bundles, so NBT, enchantments and durability all round-trip. Because
  * the data rides on the entity, it survives chunk unload and restarts with no extra table.
  *
- * <h2>How the GUI works</h2>
- * The chest inventory is backed by a small holder that remembers which creature it edits. Every
- * close writes the bag grid back to the PDC and swaps the equipment onto the creature, so there
- * is no save button to forget.
+ * <h2>Why two interact events</h2>
+ * A right-click on a living entity arrives as both {@code PlayerInteractAtEntityEvent} and
+ * {@code PlayerInteractEntityEvent} on most clients, and on some only one of the two fires.
+ * Both are handled; opening the GUI twice within a tick is harmless because the second open
+ * simply replaces the first view of the same contents.
  */
 public final class SummonStorageListener implements Listener {
 
@@ -70,16 +71,26 @@ public final class SummonStorageListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
-    public void onInteract(PlayerInteractEntityEvent event) {
-        // Fires once per hand; only the main hand opens the bag.
-        if (event.getHand() != EquipmentSlot.HAND) {
-            return;
+    public void onInteractAt(PlayerInteractAtEntityEvent event) {
+        if (event.getHand() == EquipmentSlot.HAND) {
+            event.setCancelled(true);
+            openBag(event.getPlayer(), event.getRightClicked());
         }
-        Player player = event.getPlayer();
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onInteract(PlayerInteractEntityEvent event) {
+        if (event.getHand() == EquipmentSlot.HAND) {
+            event.setCancelled(true);
+            openBag(event.getPlayer(), event.getRightClicked());
+        }
+    }
+
+    /** Opens the saddlebag if every gate passes; harmless if called twice in one tick. */
+    private void openBag(Player player, Entity clicked) {
         if (!swordGate.test(player)) {
             return;
         }
-        Entity clicked = event.getRightClicked();
         if (!(clicked instanceof WitherSkeleton) && !(clicked instanceof Wither)) {
             return;
         }
@@ -91,7 +102,6 @@ public final class SummonStorageListener implements Listener {
             return;
         }
 
-        event.setCancelled(true);
         boolean isWither = clicked instanceof Wither;
         int bagSlots = isWither ? WITHER_BAG_SLOTS : SKELETON_BAG_SLOTS;
         String title = isWither ? "Wither Saddlebag" : "Wither Skeleton Bag";
@@ -122,10 +132,9 @@ public final class SummonStorageListener implements Listener {
     }
 
     /**
-     * Guards the equipment row while the menu is open: those six slots hold items that belong on
-     * the creature, and a click that would pull them out is allowed (the player may take the
-     * armour off), but nothing may be placed there except wearable/held items - anything else
-     * would swap onto the creature and fall off into the void on close.
+     * Guards the equipment row while the menu is open: only wearable/held items may be put in
+     * the six equipment slots, or closing the menu would try to make the creature wear a steak.
+     * Taking items out is always allowed.
      */
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onClick(InventoryClickEvent event) {
@@ -136,8 +145,7 @@ public final class SummonStorageListener implements Listener {
         if (slot < 0 || slot >= EQUIPMENT_SLOTS) {
             return; // The bag row behaves like any chest.
         }
-        // Any click that would PUT something into the equipment row must be wearable. Taking out
-        // is always fine. The cursor item is what would land there on a place/swap click.
+        // The cursor item is what would land there on a place/swap click.
         ItemStack wouldPlace = event.getCursor();
         if (wouldPlace == null || wouldPlace.getType().isAir()) {
             return;
@@ -167,13 +175,10 @@ public final class SummonStorageListener implements Listener {
         return result;
     }
 
-
-
     /**
      * Every close persists: the bag grid goes back to the PDC, and the top row is swapped onto
-     * the creature as its live equipment. The old equipment is not "saved" anywhere - whatever
-     * the player left in the equipment row is what the creature wears; taking an item out and
-     * closing means it is in the player's cursor or wherever they put it.
+     * the creature as its live equipment. Whatever the player left in the equipment row is what
+     * the creature wears; taking an item out and closing means it left with the player.
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
@@ -200,14 +205,13 @@ public final class SummonStorageListener implements Listener {
             }
         }
 
-        // Then the bag below the equipment row.
+        // Then the bag below the equipment row. The stored bytes are purely the bag - the
+        // equipment row lives on the entity's real equipment slots, not in storage.
         int bagSlots = holder.bagSlots();
         ItemStack[] bag = new ItemStack[bagSlots];
         for (int index = 0; index < bagSlots; index++) {
             bag[index] = event.getInventory().getItem(EQUIPMENT_SLOTS + index);
         }
-        // The stored bytes are purely the bag - the equipment row lives on the entity's real
-        // equipment slots, not in storage.
         summon.getPersistentDataContainer().set(keyStorage, PersistentDataType.BYTE_ARRAY,
                 ItemStack.serializeItemsAsBytes(bag));
     }
