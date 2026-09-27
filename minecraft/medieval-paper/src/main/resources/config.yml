@@ -140,6 +140,10 @@ withers:
   skeletons:
     # Hard cap on skeletons one player may have alive at once.
     max-per-player: 20
+
+    # Hard cap on wither bosses one player may have alive at once. Keep this small: each wither
+    # is a boss with its own flight, sounds and area effects.
+    max-withers-per-player: 2
     # When true, skeletons keep attacking your last target until it dies; when false they stand
     # down after the first hit.
     target-persistence: true
@@ -150,3 +154,4 @@ withers:
   effects:
     # Smoke burst when a mount is created.
     mount-particles: true
+    # Hard cap on wither bosses one player may have alive at once.

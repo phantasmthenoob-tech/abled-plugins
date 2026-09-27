@@ -10,6 +10,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Wither;
 import org.bukkit.entity.WitherSkeleton;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
@@ -56,6 +57,8 @@ public final class SkeletonManager {
 
     /** Summoned skeletons per owner. */
     private final Map<UUID, Set<UUID>> ownedSkeletons = new ConcurrentHashMap<>();
+    /** Summoned wither bosses per owner. */
+    private final Map<UUID, Set<UUID>> ownedWithers = new ConcurrentHashMap<>();
     /** The owner's current target, from their last attack. */
     private final Map<UUID, UUID> currentTargets = new ConcurrentHashMap<>();
 
@@ -89,6 +92,10 @@ public final class SkeletonManager {
     /**
      * Spawns up to {@code amount} wither skeletons around the player, all owned by them.
      *
+     * <p>Each one is made permanently neutral: its follows-limit is set to the hard ceiling so
+     * vanilla target selection cannot acquire anything on its own - it attacks only when this
+     * manager hands it the owner's target, and stands down when that target dies.
+     *
      * @return how many were actually spawned (the per-player cap may cut the request short)
      */
     public int summon(Player player, int amount) {
@@ -105,38 +112,87 @@ public final class SkeletonManager {
                     instanceof WitherSkeleton skeleton)) {
                 continue;
             }
-            skeleton.getPersistentDataContainer().set(keySummoned, PersistentDataType.BYTE, (byte) 1);
-            skeleton.getPersistentDataContainer().set(keySummoner, PersistentDataType.STRING,
-                    player.getUniqueId().toString());
-            skeleton.setRemoveWhenFarAway(false);
+            stamp(skeleton, player.getUniqueId());
             ownedSkeletons.get(player.getUniqueId()).add(skeleton.getUniqueId());
             spawned++;
         }
         return spawned;
     }
 
-    /** Removes every skeleton the player owns. */
+    /**
+     * Spawns up to {@code amount} wither bosses around the player, all owned by them.
+     *
+     * <p>A commanded wither is the same deal as a commanded skeleton: owned, neutral, and it
+     * attacks only what its owner strikes. One caveat the API forces: the vanilla wither builds
+     * itself from player-placed soul sand/soil, and a spawned one does not carry an owner, so
+     * withers that shoot at things do it through this manager's target assignments only - the
+     * entity's own pickup logic is left dormant because nothing charged it.
+     */
+    public int summonWithers(Player player, int amount) {
+        int owned = ownedWithers.computeIfAbsent(player.getUniqueId(),
+                key -> ConcurrentHashMap.newKeySet()).size();
+        int allowed = Math.min(amount, settings.maxWithersPerPlayer() - owned);
+        int spawned = 0;
+        for (int index = 0; index < allowed; index++) {
+            double angle = (Math.PI * 2 * (owned + index)) / Math.max(settings.maxWithersPerPlayer(), 1);
+            Location spot = player.getLocation().clone()
+                    .add(Math.cos(angle) * 4.0, 1.0, Math.sin(angle) * 4.0);
+            if (!(player.getWorld().spawnEntity(spot, EntityType.WITHER)
+                    instanceof Wither wither)) {
+                continue;
+            }
+            stamp(wither, player.getUniqueId());
+            ownedWithers.get(player.getUniqueId()).add(wither.getUniqueId());
+            spawned++;
+        }
+        return spawned;
+    }
+
+    /** Marks an entity as owned and neutral; shared by both summon paths. */
+    private void stamp(Mob entity, UUID ownerId) {
+        entity.getPersistentDataContainer().set(keySummoned, PersistentDataType.BYTE, (byte) 1);
+        entity.getPersistentDataContainer().set(keySummoner, PersistentDataType.STRING,
+                ownerId.toString());
+        entity.setRemoveWhenFarAway(false);
+        // The neutrality mechanism: with the target-finding range at zero, vanilla AI cannot pick
+        // a target of its own. setTarget() from this manager still works - it sets the goal's
+        // target directly, bypassing selection.
+        AttributeInstance range = entity.getAttribute(Attribute.FOLLOW_RANGE);
+        if (range != null) {
+            range.setBaseValue(0.0);
+        }
+    }
+
+    /** Removes every summoned creature (skeletons and withers) the player owns. */
     public int dismiss(UUID ownerId) {
-        Set<UUID> owned = ownedSkeletons.remove(ownerId);
+        int removed = removeTracked(ownedSkeletons.remove(ownerId));
+        removed += removeTracked(ownedWithers.remove(ownerId));
+        currentTargets.remove(ownerId);
+        return removed;
+    }
+
+    /** Removes every summoned creature on the server, for the admin command. */
+    public int dismissAll() {
         int removed = 0;
-        if (owned != null) {
-            for (UUID id : owned) {
+        for (UUID ownerId : List.copyOf(ownedSkeletons.keySet())) {
+            removed += dismiss(ownerId);
+        }
+        for (UUID ownerId : List.copyOf(ownedWithers.keySet())) {
+            removed += dismiss(ownerId);
+        }
+        return removed;
+    }
+
+    private int removeTracked(Set<UUID> ids) {
+        int removed = 0;
+        if (ids != null) {
+            for (UUID id : ids) {
                 Entity entity = Bukkit.getEntity(id);
                 if (entity != null) {
                     entity.remove();
                     removed++;
                 }
             }
-        }
-        currentTargets.remove(ownerId);
-        return removed;
-    }
-
-    /** Removes every skeleton on the server, for the admin command. */
-    public int dismissAll() {
-        int removed = 0;
-        for (UUID ownerId : List.copyOf(ownedSkeletons.keySet())) {
-            removed += dismiss(ownerId);
         }
         return removed;
     }
@@ -147,12 +203,18 @@ public final class SkeletonManager {
         return owned == null ? 0 : owned.size();
     }
 
-    /** The UUID of the summoner of a skeleton, read from its PDC; null when not one of ours. */
+    /** How many wither bosses the player currently owns. */
+    public int countWithers(UUID ownerId) {
+        Set<UUID> owned = ownedWithers.get(ownerId);
+        return owned == null ? 0 : owned.size();
+    }
+
+    /** The UUID of the summoner of a stamped summon, read from its PDC; null when not one of ours. */
     public UUID ownerOf(Entity entity) {
-        if (!(entity instanceof WitherSkeleton skeleton)) {
+        if (!(entity instanceof WitherSkeleton) && !(entity instanceof Wither)) {
             return null;
         }
-        String stamped = skeleton.getPersistentDataContainer()
+        String stamped = entity.getPersistentDataContainer()
                 .get(keySummoner, PersistentDataType.STRING);
         if (stamped == null) {
             return null;
@@ -233,28 +295,57 @@ public final class SkeletonManager {
                 continue;
             }
 
-            UUID targetId = currentTargets.get(ownerId);
-            if (targetId == null) {
-                continue;
-            }
-            if (!(Bukkit.getEntity(targetId) instanceof LivingEntity target)
-                    || !target.isValid() || target.isDead()) {
-                // The target is gone: skeletons stand down rather than picking their own.
-                currentTargets.remove(ownerId);
-                for (UUID id : skeletons) {
-                    if (Bukkit.getEntity(id) instanceof Mob skeleton) {
-                        skeleton.setTarget(null);
-                    }
+            applyTarget(ownerId, skeletons);
+        }
+
+        // The wither bosses run the same loop over their own map.
+        Iterator<Map.Entry<UUID, Set<UUID>>> witherOwners = ownedWithers.entrySet().iterator();
+        while (witherOwners.hasNext()) {
+            Map.Entry<UUID, Set<UUID>> entry = witherOwners.next();
+            UUID ownerId = entry.getKey();
+            Set<UUID> withers = entry.getValue();
+
+            Iterator<UUID> ids = withers.iterator();
+            while (ids.hasNext()) {
+                Entity entity = Bukkit.getEntity(ids.next());
+                if (!(entity instanceof Wither wither) || !wither.isValid() || wither.isDead()) {
+                    ids.remove();
                 }
+            }
+            if (withers.isEmpty()) {
+                witherOwners.remove();
                 continue;
             }
-            if (settings.targetPersistence()) {
-                for (UUID id : skeletons) {
-                    if (Bukkit.getEntity(id) instanceof Mob skeleton && skeleton.isValid()) {
-                        // Reasserting every sweep keeps vanilla AI from wandering to a nearer
-                        // enemy: the owner's command is the source of truth.
-                        skeleton.setTarget(target);
-                    }
+            applyTarget(ownerId, withers);
+        }
+    }
+
+    /**
+     * Pushes the owner's current target onto every tracked entity, standing them down when the
+     * target is gone. Shared by the skeleton and wither loops.
+     */
+    private void applyTarget(UUID ownerId, Set<UUID> ids) {
+        UUID targetId = currentTargets.get(ownerId);
+        if (targetId == null) {
+            return;
+        }
+        if (!(Bukkit.getEntity(targetId) instanceof LivingEntity target)
+                || !target.isValid() || target.isDead()) {
+            // The target is gone: the summons stand down rather than picking their own.
+            currentTargets.remove(ownerId);
+            for (UUID id : ids) {
+                if (Bukkit.getEntity(id) instanceof Mob summon) {
+                    summon.setTarget(null);
+                }
+            }
+            return;
+        }
+        if (settings.targetPersistence()) {
+            for (UUID id : ids) {
+                if (Bukkit.getEntity(id) instanceof Mob summon && summon.isValid()) {
+                    // Reasserting every sweep keeps vanilla AI from wandering to a nearer
+                    // enemy: the owner's command is the source of truth.
+                    summon.setTarget(target);
                 }
             }
         }

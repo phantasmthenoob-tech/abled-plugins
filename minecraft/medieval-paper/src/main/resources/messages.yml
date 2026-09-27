@@ -324,3 +324,5 @@ wither-dismissed-all: "<gray>{count} skeleton(s) across every owner return to du
 wither-target-none: "<gray>The skeletons await your strike - attack something to aim them."
 wither-target-current: "<gray>The skeletons hunt <white>{target}</white>."
 wither-no-sword: "<red>The withers answer only to <white>{expected}</white>. You hold: <yellow>{held}</yellow>."
+wither-summon-withered: "<dark_purple>{count} wither(s) rise. {total} under your command."
+wither-summon-wither-capped: "<yellow>No withers summoned - you already command {count} of {max}."

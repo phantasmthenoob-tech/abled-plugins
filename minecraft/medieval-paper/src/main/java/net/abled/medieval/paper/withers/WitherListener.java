@@ -175,20 +175,20 @@ public final class WitherListener implements Listener {
      */
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onSkeletonDamage(EntityDamageByEntityEvent event) {
-        if (!(event.getDamager() instanceof WitherSkeleton skeleton)) {
+        if (!(event.getDamager() instanceof WitherSkeleton)
+                && !(event.getDamager() instanceof org.bukkit.entity.Wither)) {
             return;
         }
-        UUID owner = skeletons.ownerOf(skeleton);
+        UUID owner = skeletons.ownerOf(event.getDamager());
         if (owner == null) {
             return;
         }
-        // A summoned skeleton never damages its owner.
-        if (event.getEntity().getUniqueId().equals(owner)
-                && !event.getEntity().getUniqueId().equals(skeleton.getUniqueId())) {
+        // A summoned creature never damages its owner.
+        if (event.getEntity().getUniqueId().equals(owner)) {
             event.setCancelled(true);
-            if (skeleton.getTarget() != null
-                    && skeleton.getTarget().getUniqueId().equals(event.getEntity().getUniqueId())) {
-                skeleton.setTarget(null);
+            if (event.getDamager() instanceof Mob summon && summon.getTarget() != null
+                    && summon.getTarget().getUniqueId().equals(owner)) {
+                summon.setTarget(null);
             }
             return;
         }
@@ -196,7 +196,8 @@ public final class WitherListener implements Listener {
         if (!skeletons.isOwnedBy(event.getEntity(), owner)) {
             return;
         }
-        if (event.getEntity() instanceof WitherSkeleton) {
+        if (event.getEntity() instanceof WitherSkeleton
+                || event.getEntity() instanceof org.bukkit.entity.Wither) {
             event.setCancelled(true);
         }
     }
@@ -208,19 +209,21 @@ public final class WitherListener implements Listener {
      */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSkeletonTarget(EntityTargetEvent event) {
-        if (!(event.getEntity() instanceof WitherSkeleton skeleton)) {
+        if (!(event.getEntity() instanceof WitherSkeleton)
+                && !(event.getEntity() instanceof org.bukkit.entity.Wither)) {
             return;
         }
-        UUID owner = skeletons.ownerOf(skeleton);
+        Mob summon = (Mob) event.getEntity();
+        UUID owner = skeletons.ownerOf(summon);
         if (owner == null) {
             return;
         }
         if (event.getTarget() instanceof LivingEntity candidate) {
             if (candidate.getUniqueId().equals(owner)
-                    || (candidate instanceof WitherSkeleton
+                    || ((candidate instanceof WitherSkeleton || candidate instanceof org.bukkit.entity.Wither)
                             && skeletons.isOwnedBy(candidate, owner))) {
                 event.setCancelled(true);
-                skeleton.setTarget(null);
+                summon.setTarget(null);
             }
         }
     }

@@ -266,7 +266,14 @@ public final class WitherMountManager {
     }
 
     /**
-     * Applies the rider's input as acceleration on the control stand, then glues the skull on top.
+     * Applies the rider's input as acceleration, then carries the whole rig by teleport.
+     *
+     * <p>Velocity-setting does not work here on either layer: a marker armour stand is not a
+     * steerable vehicle (vanilla only steers pigs, horses and striders) and ignores setVelocity,
+     * and a skull's projectile physics fights any velocity we impose. So the velocity model is
+     * kept for feel - acceleration, drag, a speed cap - but integrated into a position that the
+     * vehicle is teleported to each tick. The passenger teleports with the vehicle, and the skull
+     * is teleported onto the vehicle, so the whole mount moves as one body.
      */
     private void steer(RideableWither mount, Player rider, ArmorStand vehicle, WitherSkull skull) {
         org.bukkit.Input input = rider.getCurrentInput();
@@ -321,13 +328,21 @@ public final class WitherMountManager {
         velocity.multiply(settings.drag());
         mount.setVelocity(velocity);
 
-        vehicle.setVelocity(velocity);
+        // Integrate one tick of motion and move the rig. Setting the yaw/pitch first keeps the
+        // stand (and therefore the skull and the rider's seat) facing where the player looks.
+        Location seat = vehicle.getLocation();
+        seat.setYaw(eye.getYaw());
+        seat.setPitch(0.0f);
+        seat.add(velocity.getX(), velocity.getY(), velocity.getZ());
+        vehicle.teleport(seat);
 
         // The skull rides exactly on the control stand. The stand is invisible, so the skull is
         // the thing the player sees beneath them - inside it, at the eye line of a rider.
-        skull.setRotation(vehicle.getLocation().getYaw(), vehicle.getLocation().getPitch());
-        skull.setVelocity(velocity);
-        skull.teleport(vehicle.getLocation());
+        Location skullSpot = seat.clone();
+        skullSpot.setYaw(eye.getYaw());
+        skullSpot.setPitch(eye.getPitch() * 0.5f);
+        skull.setRotation(skullSpot.getYaw(), skullSpot.getPitch());
+        skull.teleport(skullSpot);
     }
 
     /**

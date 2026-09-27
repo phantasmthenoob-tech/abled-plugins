@@ -23,6 +23,7 @@ public record WitherSettings(
         boolean collisionExplosion,
         boolean mountParticles,
         int maxSkeletonsPerPlayer,
+        int maxWithersPerPlayer,
         boolean targetPersistence,
         boolean ownerImmunity,
         boolean friendlyFireBetweenOwned) {
@@ -43,6 +44,7 @@ public record WitherSettings(
                 config.getBoolean("withers.mount.collision-explosion", true),
                 config.getBoolean("withers.effects.mount-particles", true),
                 Math.max(1, config.getInt("withers.skeletons.max-per-player", 20)),
+                Math.max(1, config.getInt("withers.skeletons.max-withers-per-player", 2)),
                 config.getBoolean("withers.skeletons.target-persistence", true),
                 config.getBoolean("withers.skeletons.owner-immunity", true),
                 config.getBoolean("withers.skeletons.friendly-fire-between-owned", false));

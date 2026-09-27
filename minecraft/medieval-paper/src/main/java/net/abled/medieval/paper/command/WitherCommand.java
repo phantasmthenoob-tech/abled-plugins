@@ -73,9 +73,16 @@ public final class WitherCommand {
                                 .executes(context -> toggleType(context.getSource()))))
                 .then(Commands.literal("summon")
                         .executes(context -> summon(context.getSource(), 1))
-                        .then(Commands.argument("amount", IntegerArgumentType.integer(1, 20))
-                                .executes(context -> summon(context.getSource(),
-                                        IntegerArgumentType.getInteger(context, "amount")))))
+                        .then(Commands.literal("skeleton")
+                                .executes(context -> summon(context.getSource(), 1))
+                                .then(Commands.argument("amount", IntegerArgumentType.integer(1, 64))
+                                        .executes(context -> summon(context.getSource(),
+                                                IntegerArgumentType.getInteger(context, "amount")))))
+                        .then(Commands.literal("wither")
+                                .executes(context -> summonWither(context.getSource(), 1))
+                                .then(Commands.argument("amount", IntegerArgumentType.integer(1, 8))
+                                        .executes(context -> summonWither(context.getSource(),
+                                                IntegerArgumentType.getInteger(context, "amount"))))))
                 .then(Commands.literal("dismiss")
                         .executes(context -> dismiss(context.getSource())))
                 .then(Commands.literal("dismissall")
@@ -208,6 +215,24 @@ public final class WitherCommand {
             renderer.send(player, "wither-summoned", Map.of(
                     "count", String.valueOf(spawned),
                     "total", String.valueOf(skeletons.count(player.getUniqueId()))), true);
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int summonWither(CommandSourceStack source, int amount) {
+        if (checkSword(source) >= 0) {
+            return Command.SINGLE_SUCCESS;
+        }
+        Player player = (Player) source.getSender();
+        int spawned = skeletons.summonWithers(player, amount);
+        if (spawned <= 0) {
+            renderer.send(player, "wither-summon-wither-capped", Map.of(
+                    "count", String.valueOf(skeletons.countWithers(player.getUniqueId())), "max",
+                    String.valueOf(mounts.settings().maxWithersPerPlayer())), true);
+        } else {
+            renderer.send(player, "wither-summon-withered", Map.of(
+                    "count", String.valueOf(spawned),
+                    "total", String.valueOf(skeletons.countWithers(player.getUniqueId()))), true);
         }
         return Command.SINGLE_SUCCESS;
     }
