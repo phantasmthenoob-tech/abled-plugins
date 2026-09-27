@@ -203,9 +203,15 @@ public final class WitherListener implements Listener {
     }
 
     /**
-     * The belt to the damage event's braces: if vanilla AI ever picks the owner or a fellow owned
-     * skeleton as a target for a summoned skeleton, the choice is refused before it becomes an
-     * attack.
+     * The single hard rule for summon targeting: a stamped summon may only target what its owner
+     * assigned, everything else is refused at the event.
+     *
+     * <p>Zeroing follow range was not enough - a wither boss scans for targets through its own
+     * AI rather than follow range, and revenge targeting (retaliation for being hit, which is how
+     * an iron golem's provoke or a player's stray arrow turns a skeleton hostile) bypasses range
+     * checks entirely. This handler is therefore an allowlist, not a blacklist: the manager's
+     * assigned target passes, and everything else - owners, fellow summons, golems, bystanders -
+     * is cancelled before it becomes an attack.
      */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSkeletonTarget(EntityTargetEvent event) {
@@ -218,11 +224,15 @@ public final class WitherListener implements Listener {
         if (owner == null) {
             return;
         }
-        if (event.getTarget() instanceof LivingEntity candidate) {
-            if (candidate.getUniqueId().equals(owner)
-                    || ((candidate instanceof WitherSkeleton || candidate instanceof org.bukkit.entity.Wither)
-                            && skeletons.isOwnedBy(candidate, owner))) {
-                event.setCancelled(true);
+        if (event.getTarget() == null) {
+            return; // Clearing a target is always fine.
+        }
+        UUID assigned = skeletons.currentTarget(owner);
+        boolean isAssigned = event.getTarget().getUniqueId().equals(assigned);
+        if (!isAssigned) {
+            event.setCancelled(true);
+            if (summon.getTarget() != null
+                    && !summon.getTarget().getUniqueId().equals(assigned)) {
                 summon.setTarget(null);
             }
         }
