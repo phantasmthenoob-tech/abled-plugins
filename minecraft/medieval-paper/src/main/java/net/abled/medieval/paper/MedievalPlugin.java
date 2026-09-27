@@ -45,6 +45,7 @@ import net.abled.medieval.paper.storage.PaperStorage;
 import net.abled.medieval.paper.withers.SkeletonManager;
 import net.abled.medieval.paper.withers.WitherListener;
 import net.abled.medieval.paper.withers.WitherMountManager;
+import net.abled.medieval.paper.withers.SummonStorageListener;
 import net.abled.medieval.paper.withers.WitherSettings;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -176,12 +177,22 @@ public final class MedievalPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new WitherListener(this, localMountManager, localSkeletonManager), this);
 
+        // The summon saddlebags: right-click an owned summon with the key sword and a chest GUI
+        // opens, stored on the creature's own PDC so it survives chunk unload and restarts. The
+        // sword gate is the command's own check, shared so there is one definition of the key.
+        net.abled.medieval.paper.command.WitherCommand witherCommand =
+                new net.abled.medieval.paper.command.WitherCommand(localMountManager,
+                        localSkeletonManager, renderer, ownerGate);
+        getServer().getPluginManager().registerEvents(
+                new SummonStorageListener(this, localSkeletonManager, witherCommand::hasKeySword),
+                this);
+
         DimensionCommands dimensionCommands = new DimensionCommands(dimensions, scheduler, renderer, getLogger());
         new MedievalCommandRegistrar(this, core, renderer,
                 new DeathbanCommands(deathbans, deathbanPolicy, identities, scheduler, renderer, getLogger()),
                 dimensionCommands, catalogueCommands,
                 new LandCommands(blockSearch, renderer, blockSearch::isEnabled),
-                wandCommand, new WitherCommand(localMountManager, localSkeletonManager, renderer, ownerGate))
+                wandCommand, witherCommand)
                 .register();
 
         getServer().getPluginManager().registerEvents(

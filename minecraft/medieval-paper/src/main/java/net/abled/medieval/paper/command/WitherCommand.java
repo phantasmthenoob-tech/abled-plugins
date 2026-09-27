@@ -100,6 +100,11 @@ public final class WitherCommand {
         return false;
     }
 
+    /** Whether the player holds the key sword; exposed for the saddlebag interaction too. */
+    public boolean hasKeySword(Player player) {
+        return holdingWithersBane(player);
+    }
+
     /** The execution gate: owner (re-checked) AND holding a sword named Wither's Bane. */
     private boolean allowed(CommandSender sender) {
         if (!(sender instanceof Player player)) {
