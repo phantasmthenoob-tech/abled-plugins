@@ -1,0 +1,15 @@
+name: LoginGuard
+version: '1.0.0'
+main: net.abled.loginguard.LoginGuardPlugin
+api-version: '1.21'
+authors: [Abled]
+description: Forced /register and /login with a movement and interaction lockdown.
+commands:
+  register:
+    description: Create your account with a password.
+    usage: /register <password> <confirm>
+    aliases: [reg]
+  login:
+    description: Sign in with your password.
+    usage: /login <password>
+    aliases: [l]
