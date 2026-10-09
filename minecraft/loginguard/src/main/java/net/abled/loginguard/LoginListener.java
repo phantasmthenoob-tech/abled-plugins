@@ -59,6 +59,14 @@ final class LoginListener implements Listener {
         manager.handleQuit(event.getPlayer().getUniqueId());
     }
 
+    /**
+     * Corrects a locked player's drift within the same movement event: setTo rewrites the packet
+     * in place, no teleport is issued, so the client's teleport-confirmation handshake is never
+     * touched and Paper's "Invalid move player packet received" kick cannot be provoked from
+     * here. Position delta only - rotation stays, or even standing still would fire.
+     * <p>Debug logging is deliberately NOT in the common path: one line format is only used once
+     * the correction is real, meaning a locked player's normal idling never floods the log.
+     */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onMove(PlayerMoveEvent event) {
         if (!locked(event.getPlayer().getUniqueId())) {
@@ -66,11 +74,14 @@ final class LoginListener implements Listener {
         }
         var from = event.getFrom();
         var to = event.getTo();
-        dbg("move corrected for %s: %s -> %s",
-                event.getPlayer().getName(), from.toVector(), to == null ? "null" : to.toVector());
+        if (to == null) {
+            return;
+        }
         if (Math.abs(from.getX() - to.getX()) > 1e-4
                 || Math.abs(from.getZ() - to.getZ()) > 1e-4
                 || Math.abs(from.getY() - to.getY()) > 1e-4) {
+            dbg("move corrected for %s: %s -> %s",
+                    event.getPlayer().getName(), from.toVector(), to.toVector());
             event.setTo(from);
         }
     }
@@ -157,16 +168,10 @@ final class LoginListener implements Listener {
         if (event.getEntity() instanceof org.bukkit.entity.Player player && locked(player.getUniqueId())) {
             event.setCancelled(true);
         }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    }    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
-        if (event.getEntity() instanceof org.bukkit.entity.Player player) {
-            dbg("damage %s cause=%s locked=%b",
-                    player.getName(), event.getCause(), locked(player.getUniqueId()));
-            if (locked(player.getUniqueId())) {
-                event.setCancelled(true);
-            }
+        if (event.getEntity() instanceof org.bukkit.entity.Player player && locked(player.getUniqueId())) {
+            event.setCancelled(true);
         }
     }
 }
