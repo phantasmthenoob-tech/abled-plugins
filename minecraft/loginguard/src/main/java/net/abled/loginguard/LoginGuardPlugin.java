@@ -27,7 +27,22 @@ public final class LoginGuardPlugin extends JavaPlugin {
         }
 
         manager = new LoginManager(this, store);
-        getServer().getPluginManager().registerEvents(new LoginListener(manager), this);
+        LoginListener listener = new LoginListener(manager);
+        getServer().getPluginManager().registerEvents(listener, this);
+
+        // Every 30s: repeat the prompt so an unauthenticated player always has instructions
+        // on screen, and (diagnostically) prove the plugin is alive - if these reminders stop,
+        // LoginGuard is not enabled, which is itself a lockdown failure worth noticing.
+        getServer().getScheduler().runTaskTimer(this, () ->
+                getServer().getOnlinePlayers().forEach(player -> {
+                    if (!manager.isAuthenticated(player.getUniqueId())) {
+                        String note = store.exists(player.getUniqueId())
+                                ? "please /login <password>"
+                                : "please /register <password> <confirm>";
+                        player.sendActionBar(note);
+                        player.sendMessage(note);
+                    }
+                }), 600L, 600L);
 
         PluginCommand register = getCommand("register");
         PluginCommand login = getCommand("login");

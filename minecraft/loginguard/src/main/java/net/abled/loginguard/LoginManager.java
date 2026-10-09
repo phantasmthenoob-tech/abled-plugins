@@ -24,6 +24,10 @@ final class LoginManager {
         this.store = store;
     }
 
+    JavaPlugin plugin() {
+        return plugin;
+    }
+
     boolean isAuthenticated(UUID id) {
         return authenticated.contains(id);
     }
@@ -55,7 +59,7 @@ final class LoginManager {
             return;
         }
         try {
-            store.create(player.getUniqueId(), password);
+            store.create(player.getUniqueId(), player.getName(), password);
             authenticated.add(player.getUniqueId());
             player.sendMessage("\u00A7aregistered, welcome");
         } catch (IOException e) {

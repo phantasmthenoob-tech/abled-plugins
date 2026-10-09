@@ -1,11 +1,8 @@
 package net.abled.loginguard;
 
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
@@ -23,9 +20,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.EquipmentSlot;
 
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
+
+import org.bukkit.Bukkit;
 
 /**
  * Blocks everything a not-yet-authenticated player can do, and prompts them on join.
@@ -54,12 +51,23 @@ final class LoginListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onMove(PlayerMoveEvent event) {
-        if (locked(event.getPlayer().getUniqueId())) {
-            var from = event.getFrom();
-            var to = event.getTo();
-            if (from.getX() != to.getX() || from.getY() != to.getY() || from.getZ() != to.getZ()) {
-                event.setTo(from);
-            }
+        if (!locked(event.getPlayer().getUniqueId())) {
+            return;
+        }
+        var from = event.getFrom();
+        var to = event.getTo();
+        // Rotation alone is allowed: you can look around but not step. Even a tiny sub-block slip
+        // is undone, and the authoritative correction is a server teleport next tick rather than
+        // setTo - some Paper builds ignore setTo on PlayerMoveEvent, teleport never does.
+        if (Math.abs(from.getX() - to.getX()) > 1e-4
+                || Math.abs(from.getZ() - to.getZ()) > 1e-4
+                || Math.abs(from.getY() - to.getY()) > 1e-4) {
+            event.setTo(from);
+            Bukkit.getScheduler().runTask(manager.plugin(), () -> {
+                if (event.getPlayer().isOnline() && locked(event.getPlayer().getUniqueId())) {
+                    event.getPlayer().teleport(from);
+                }
+            });
         }
     }
 
