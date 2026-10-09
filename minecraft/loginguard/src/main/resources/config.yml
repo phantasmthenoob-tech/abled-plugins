@@ -1,0 +1,7 @@
+# LoginGuard configuration
+#
+# debug: when true, every join/quit/login-attempt/move-correction/teleport/damage the
+# lockdown reacts to is written to the server console. That answers "who moved me and
+# when" the moment it happens: a move-correction logged right before the kick names the
+# trigger; nothing logged means the kick came from somewhere else entirely.
+debug: false

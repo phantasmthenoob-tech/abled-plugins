@@ -27,8 +27,11 @@ public final class LoginGuardPlugin extends JavaPlugin {
         }
 
         manager = new LoginManager(this, store);
-        LoginListener listener = new LoginListener(manager);
-        getServer().getPluginManager().registerEvents(listener, this);
+        boolean debug = getConfig().getBoolean("debug", false);
+        if (debug) {
+            getLogger().info("debug logging enabled via config.yml (debug: true)");
+        }
+        LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
         // Every 30s: repeat the prompt so an unauthenticated player always has instructions
         // on screen, and (diagnostically) prove the plugin is alive - if these reminders stop,
@@ -44,6 +47,7 @@ public final class LoginGuardPlugin extends JavaPlugin {
                     }
                 }), 600L, 600L);
 
+        getServer().getPluginManager().registerEvents(listener, this);
         PluginCommand register = getCommand("register");
         PluginCommand login = getCommand("login");
         if (register != null) {

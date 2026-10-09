@@ -7,7 +7,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
@@ -18,9 +18,9 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
-import org.bukkit.inventory.EquipmentSlot;
 
 import java.util.UUID;
+import java.util.logging.Logger;
 
 /**
  * Blocks everything a not-yet-authenticated player can do, and prompts them on join.
@@ -28,22 +28,34 @@ import java.util.UUID;
 final class LoginListener implements Listener {
 
     private final LoginManager manager;
+    private final Logger logger;
+    private final boolean debug;
 
-    LoginListener(LoginManager manager) {
+    LoginListener(LoginManager manager, Logger logger, boolean debug) {
         this.manager = manager;
+        this.logger = logger;
+        this.debug = debug;
     }
 
-    private boolean locked(java.util.UUID id) {
+    private boolean locked(UUID id) {
         return !manager.isAuthenticated(id);
+    }
+
+    private void dbg(String format, Object... args) {
+        if (debug) {
+            logger.info("[debug] " + String.format(format, args));
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onJoin(PlayerJoinEvent event) {
         manager.handleJoin(event.getPlayer());
+        dbg("join %s locked=%b", event.getPlayer().getName(), locked(event.getPlayer().getUniqueId()));
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        dbg("quit %s", event.getPlayer().getName());
         manager.handleQuit(event.getPlayer().getUniqueId());
     }
 
@@ -54,21 +66,11 @@ final class LoginListener implements Listener {
         }
         var from = event.getFrom();
         var to = event.getTo();
-        // Position is corrected in place with setTo only: a server teleport here desyncs the
-        // client's movement-teleport confirmation (Paper tracks teleport IDs server-side and
-        // kicks clients whose confirmation repeats - "Invalid Player Move packet received"),
-        // which is exactly what attacking a mob reliably triggers, because the attack knockback
-        // moves you a hair and the fight loop is then teleporting every few packets. setTo keeps
-        // the world and the client in the same frame of reference and never produces a kick.
+        dbg("move corrected for %s: %s -> %s",
+                event.getPlayer().getName(), from.toVector(), to == null ? "null" : to.toVector());
         if (Math.abs(from.getX() - to.getX()) > 1e-4
                 || Math.abs(from.getZ() - to.getZ()) > 1e-4
                 || Math.abs(from.getY() - to.getY()) > 1e-4) {
-            // setTo only, never cancel and never a real teleport: cancelling a move event is
-            // internally another teleport in Paper, and both approaches bump the client-side
-            // teleport-confirmation handshake - the mechanism behind "Invalid Player Move packet
-            // received" kicks, which attack knockback (a stream of tiny corrections while you
-            // swing at a mob) reliably trips. setTo quietly rewrites the packet in place and
-            // desyncs nothing.
             event.setTo(from);
         }
     }
@@ -76,8 +78,10 @@ final class LoginListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
         String root = event.getMessage().split(" ")[0].toLowerCase().substring(1);
-        if (locked(event.getPlayer().getUniqueId())
-                && !root.equals("register") && !root.equals("reg") && !root.equals("login") && !root.equals("l")) {
+        boolean exempt = root.equals("register") || root.equals("reg") || root.equals("login") || root.equals("l");
+        dbg("command %s for %s, locked=%b, exempt=%b",
+                root, event.getPlayer().getName(), locked(event.getPlayer().getUniqueId()), exempt);
+        if (locked(event.getPlayer().getUniqueId()) && !exempt) {
             event.setCancelled(true);
         }
     }
@@ -140,12 +144,11 @@ final class LoginListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onTeleport(PlayerTeleportEvent event) {
+        dbg("teleport %s cause=%s locked=%b", event.getPlayer().getName(), event.getCause(), locked(event.getPlayer().getUniqueId()));
         if (locked(event.getPlayer().getUniqueId())
-                && event.getCause() == PlayerTeleportEvent.TeleportCause.COMMAND
-                || event.getCause() == PlayerTeleportEvent.TeleportCause.PLUGIN) {
-            if (locked(event.getPlayer().getUniqueId())) {
-                event.setCancelled(true);
-            }
+                && (event.getCause() == PlayerTeleportEvent.TeleportCause.COMMAND
+                    || event.getCause() == PlayerTeleportEvent.TeleportCause.PLUGIN)) {
+            event.setCancelled(true);
         }
     }
 
@@ -157,10 +160,13 @@ final class LoginListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-    public void onDamage(org.bukkit.event.entity.EntityDamageEvent event) {
-        if (event.getEntity() instanceof org.bukkit.entity.Player player
-                && player.isOnline() && locked(player.getUniqueId())) {
-            event.setCancelled(true);
+    public void onDamage(EntityDamageEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Player player) {
+            dbg("damage %s cause=%s locked=%b",
+                    player.getName(), event.getCause(), locked(player.getUniqueId()));
+            if (locked(player.getUniqueId())) {
+                event.setCancelled(true);
+            }
         }
     }
 }
