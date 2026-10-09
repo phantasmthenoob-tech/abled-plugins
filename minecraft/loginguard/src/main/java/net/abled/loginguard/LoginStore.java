@@ -5,25 +5,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Persists login records under the plugin's {@code logins} folder.
- *
- * <p>One file per player, named {@code <playername>.login}, holding {@code salt:hash} where hash is
- * SHA-256 over {@code salt + password}. Two downsides to note honestly: the form has no pepper and
- * one round - for a game-server password file that is the right trade against CBC/Bruteforce kits,
- * and salt-per-record means two identical passwords look different on disk.
+ * Persists login records under the plugin's {@code logins} folder, in plaintext.
  */
 final class LoginStore {
 
     private final Path folder;
-    private final SecureRandom random = new SecureRandom();
 
     LoginStore(Path folder) throws IOException {
         this.folder = folder;
@@ -47,26 +37,13 @@ final class LoginStore {
         return recordOf(id).isPresent();
     }
 
-    void create(UUID id, String password) throws IOException, NoSuchAlgorithmException {
-        byte[] salt = new byte[16];
-        random.nextBytes(salt);
-        String saltHex = HexFormat.of().formatHex(salt);
-        write(id, saltHex + ":" + sha256(saltHex + password));
+    void create(UUID id, String password) throws IOException {
+        write(id, password);
     }
 
     boolean check(UUID id, String password) {
         Optional<String> record = recordOf(id);
-        if (record.isEmpty()) {
-            return false;
-        }
-        int sep = record.get().indexOf(':');
-        if (sep < 0) {
-            return false;
-        }
-        String saltHex = record.get().substring(0, sep);
-        String expected = record.get().substring(sep + 1);
-        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
-                sha256(saltHex + password).getBytes(StandardCharsets.UTF_8));
+        return record.isPresent() && record.get().equals(password);
     }
 
     private void write(UUID id, String line) throws IOException {
@@ -77,15 +54,6 @@ final class LoginStore {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             Files.writeString(file, line, StandardCharsets.UTF_8);
-        }
-    }
-
-    private static String sha256(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 missing", e);
         }
     }
 }

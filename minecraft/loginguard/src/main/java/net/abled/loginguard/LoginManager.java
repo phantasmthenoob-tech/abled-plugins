@@ -6,7 +6,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -59,7 +58,7 @@ final class LoginManager {
             store.create(player.getUniqueId(), password);
             authenticated.add(player.getUniqueId());
             player.sendMessage("\u00A7aregistered, welcome");
-        } catch (IOException | NoSuchAlgorithmException e) {
+        } catch (IOException e) {
             player.sendMessage("\u00A7cfailed to save the account, try again");
             plugin.getLogger().warning("registration save failed: " + e.getMessage());
         }
