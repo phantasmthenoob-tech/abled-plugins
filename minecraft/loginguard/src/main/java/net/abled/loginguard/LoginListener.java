@@ -22,8 +22,6 @@ import org.bukkit.inventory.EquipmentSlot;
 
 import java.util.UUID;
 
-import org.bukkit.Bukkit;
-
 /**
  * Blocks everything a not-yet-authenticated player can do, and prompts them on join.
  */
@@ -56,18 +54,22 @@ final class LoginListener implements Listener {
         }
         var from = event.getFrom();
         var to = event.getTo();
-        // Rotation alone is allowed: you can look around but not step. Even a tiny sub-block slip
-        // is undone, and the authoritative correction is a server teleport next tick rather than
-        // setTo - some Paper builds ignore setTo on PlayerMoveEvent, teleport never does.
+        // Position is corrected in place with setTo only: a server teleport here desyncs the
+        // client's movement-teleport confirmation (Paper tracks teleport IDs server-side and
+        // kicks clients whose confirmation repeats - "Invalid Player Move packet received"),
+        // which is exactly what attacking a mob reliably triggers, because the attack knockback
+        // moves you a hair and the fight loop is then teleporting every few packets. setTo keeps
+        // the world and the client in the same frame of reference and never produces a kick.
         if (Math.abs(from.getX() - to.getX()) > 1e-4
                 || Math.abs(from.getZ() - to.getZ()) > 1e-4
                 || Math.abs(from.getY() - to.getY()) > 1e-4) {
+            // setTo only, never cancel and never a real teleport: cancelling a move event is
+            // internally another teleport in Paper, and both approaches bump the client-side
+            // teleport-confirmation handshake - the mechanism behind "Invalid Player Move packet
+            // received" kicks, which attack knockback (a stream of tiny corrections while you
+            // swing at a mob) reliably trips. setTo quietly rewrites the packet in place and
+            // desyncs nothing.
             event.setTo(from);
-            Bukkit.getScheduler().runTask(manager.plugin(), () -> {
-                if (event.getPlayer().isOnline() && locked(event.getPlayer().getUniqueId())) {
-                    event.getPlayer().teleport(from);
-                }
-            });
         }
     }
 
