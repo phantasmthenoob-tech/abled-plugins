@@ -35,6 +35,10 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        // Write the bundled config.yml on first run: without this, a missing file leaves every
+        // getConfig() read at code defaults (bridge permanently off) and there is no file to edit.
+        saveDefaultConfig();
+
         Path loginsFolder = getDataFolder().toPath().resolve("logins");
         LoginStore store;
         try {
