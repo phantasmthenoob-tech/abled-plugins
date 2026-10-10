@@ -4,7 +4,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -14,10 +13,12 @@ import java.util.function.Consumer;
 /**
  * Tracks who is authenticated, decides verdicts (locally or through the bridge), and prompts.
  *
- * <p>Bridge mode is optional: with a bridge wired, every register/login first goes upstream; the
- * local {@code logins} record is written on SUCCESS (and refreshed on every successful login) in
- * the same plaintext {@code username:}/{code password:} format as the standalone flow. Without a
- * bridge the original local-only behaviour applies unchanged.
+ * <p><b threading contract:</b> command methods ({@link #register}/{@link #login}) are invoked on
+ * the server main thread and never block. The bridge round trip is asynchronous: the request is
+ * handed to the async scheduler, and only the small state mutations (authenticated set trim,
+ * messages) hop back to the main thread when the worker's verdict arrives. Without this, a slow
+ * upstream verification would freeze the tick loop - the exact failure verified in production
+ * thread dumps on 2026-10-10.
  */
 final class LoginManager {
 
@@ -27,7 +28,7 @@ final class LoginManager {
     private Consumer<String> log;
 
     /** Optional bridge; null in local-only mode. */
-    private java.util.function.BiFunction<String, String, Optional<Verdict>> bridge;
+    private BridgeClient bridge;
     private LoginStore bridgeStore;
 
     LoginManager(JavaPlugin plugin, LoginStore store) {
@@ -41,12 +42,7 @@ final class LoginManager {
     }
 
     void setBridge(BridgeClient client, LoginStore store) {
-        this.bridge = (username, password) -> {
-            if (client == null) {
-                return Optional.empty();
-            }
-            return Optional.of(client.verify(username, password, LoginGuardPlugin.Mode.LOGIN));
-        };
+        this.bridge = client;
         this.bridgeStore = store;
     }
 
@@ -56,12 +52,8 @@ final class LoginManager {
 
     void handleJoin(Player player) {
         authenticated.remove(player.getUniqueId());
-        if (store.exists(player.getUniqueId())) {
-            if (bridge != null) {
-                player.sendMessage("\u00A7eplease /login <password>");
-            } else {
-                player.sendMessage("\u00A7eplease /login <password>");
-            }
+        if (store.exists(player.getUniqueId()) || bridge != null) {
+            player.sendMessage("\u00A7eplease /login <password>");
         } else {
             player.sendMessage("\u00A7eplease /register <password> <confirm>");
         }
@@ -81,30 +73,7 @@ final class LoginManager {
             return;
         }
         if (bridge != null) {
-            // Bridge register: the upstream decides whether a fresh account can be created. The
-            // bridge register path is a plain login against upstream first (NO_ACCOUNT means the
-            // username is free to claim locally), then explicit local record creation.
-            Verdict verdict = bridge.apply(player.getName(), password).orElse(Verdict.UPSTREAM_DOWN);
-            log.accept("bridge verdict for register of " + player.getName() + ": " + verdict);
-            switch (verdict) {
-                case SUCCESS -> {
-                    // already exists upstream; that's fine, accept and record locally
-                }
-                case NO_ACCOUNT -> { /* fresh registration locally, that's allowed */ }
-                default -> {
-                    player.sendMessage("\u00A7cverification failed (" + verdict + "); try again later");
-                    return;
-                }
-            }
-            try {
-                bridgeStore.create(player.getUniqueId(), player.getName(), password);
-            } catch (IOException e) {
-                player.sendMessage("\u00A7cfailed to save the local account record, try again");
-                log.accept("registration save failed: " + e.getMessage());
-                return;
-            }
-            authenticated.add(player.getUniqueId());
-            player.sendMessage("\u00A7aregistered, welcome");
+            verifyAsync(player, password, RequestAction.REGISTER);
         } else {
             if (store.exists(player.getUniqueId())) {
                 player.sendMessage("\u00A7caccount already exists, use /login");
@@ -123,23 +92,7 @@ final class LoginManager {
 
     void login(Player player, String password) {
         if (bridge != null) {
-            Verdict verdict = bridge.apply(player.getName(), password).orElse(Verdict.UPSTREAM_DOWN);
-            log.accept("bridge verdict for login of " + player.getName() + ": " + verdict);
-            switch (verdict) {
-                case SUCCESS -> {
-                    authenticated.add(player.getUniqueId());
-                    player.sendMessage("\u00A7awelcome back");
-                    try {
-                        // Refresh the plaintext record on every successful bridge login, per spec.
-                        bridgeStore.create(player.getUniqueId(), player.getName(), password);
-                    } catch (IOException e) {
-                        log.accept("failed to refresh login record: " + e.getMessage());
-                    }
-                }
-                case WRONG_PASSWORD -> player.sendMessage("\u00A7cwrong password");
-                case NO_ACCOUNT -> player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
-                case UPSTREAM_TIMEOUT, UPSTREAM_DOWN -> player.sendMessage("\u00A7cverification unavailable; try again shortly");
-            }
+            verifyAsync(player, password, RequestAction.LOGIN);
         } else {
             if (!store.exists(player.getUniqueId())) {
                 player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
@@ -150,6 +103,69 @@ final class LoginManager {
                 player.sendMessage("\u00A7awelcome back");
             } else {
                 player.sendMessage("\u00A7cwrong password");
+            }
+        }
+    }
+
+    private enum RequestAction { REGISTER, LOGIN }
+
+    /**
+     * Drops onto the async scheduler, does the blocking worker exchange there, then hops back to
+     * the main tick loop for the outcome. The player is kept locked the whole time.
+     */
+    private void verifyAsync(Player player, String password, RequestAction action) {
+        UUID id = player.getUniqueId();
+        String name = player.getName();
+        player.sendMessage("\u00A77verifying, hold on...");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            Verdict verdict = action == RequestAction.REGISTER
+                    ? bridge.verify(name, password, LoginGuardPlugin.Mode.REGISTER)
+                    : bridge.verify(name, password, LoginGuardPlugin.Mode.LOGIN);
+            log.accept("bridge verdict for " + action.toString().toLowerCase() + " of " + name + ": " + verdict);
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (!player.isOnline() || !player.getUniqueId().equals(id)) {
+                    return;
+                }
+                applyVerdict(player, password, action, verdict);
+            });
+        });
+    }
+
+    /** Main-thread only; applies the bridge verdict to the player. */
+    private void applyVerdict(Player player, String password, RequestAction action, Verdict verdict) {
+        boolean registerAction = action == RequestAction.REGISTER;
+        if (registerAction) {
+            switch (verdict) {
+                case SUCCESS -> { /* account already exists upstream; accept it as the identity */ }
+                case NO_ACCOUNT -> { /* fresh user, allowed to register locally */ }
+                default -> {
+                    player.sendMessage("\u00A7cverification failed (" + verdict + "); try again later");
+                    return;
+                }
+            }
+            try {
+                bridgeStore.create(player.getUniqueId(), player.getName(), password);
+            } catch (IOException e) {
+                player.sendMessage("\u00A7cfailed to save the local account record, try again");
+                log.accept("registration save failed: " + e.getMessage());
+                return;
+            }
+            authenticated.add(player.getUniqueId());
+            player.sendMessage("\u00A7aregistered, welcome");
+        } else {
+            switch (verdict) {
+                case SUCCESS -> {
+                    authenticated.add(player.getUniqueId());
+                    player.sendMessage("\u00A7awelcome back");
+                    try {
+                        bridgeStore.create(player.getUniqueId(), player.getName(), password);
+                    } catch (IOException e) {
+                        log.accept("failed to refresh login record: " + e.getMessage());
+                    }
+                }
+                case WRONG_PASSWORD -> player.sendMessage("\u00A7cwrong password");
+                case NO_ACCOUNT -> player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
+                case UPSTREAM_TIMEOUT, UPSTREAM_DOWN -> player.sendMessage("\u00A7cverification unavailable; try again shortly");
             }
         }
     }
