@@ -13,6 +13,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.Clientbound
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundClearDialogPacket;
 import org.geysermc.mcprotocollib.protocol.packet.login.clientbound.ClientboundLoginDisconnectPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundDisconnectPacket;
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
 import org.cloudburstmc.nbt.NbtType;
@@ -21,18 +22,26 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 
 /**
- * Drives the real verification: connects to the upstream offline-mode server with
- * {@link Request#username()}, receives AuthMe's pre-join login {@code Dialog}, and clicks the
- * submit action carrying the typed password.
+ * Drives the real verification with two interchangeable flows, selected by what the upstream
+ * actually shows:
  *
- * <p>The dialog arrives as {@link ClientboundShowDialogConfigurationPacket} during
- * configuration; its NBT carries the input field ids and the action id. A response is
- * {@code ServerboundCustomClickActionPacket(id, payload)} where the payload maps each input's
- * id to its typed string. Everything upstream-specific lives in this class only.
+ * <ol>
+ *   <li><b>Dialog flow</b> - AuthMe 6.0-style servers that push a Paper Dialog screen with a
+ *       text input before/at join. The worker fills the input and clicks the submit action.</li>
+ *   <li><b>Chat-command flow</b> - classic AuthMe-style servers whose join message says
+ *       "register with /register &lt;password&gt; &lt;password&gt;" or "login with /login
+ *       &lt;password&gt;". The worker sends the equivalent {@code ServerboundChatCommandPacket}
+ *       and reads the outcome from the reply text.</li>
+ * </ol>
+ *
+ * <p>Flow selection is evidence-based: a dialog packet selects the dialog flow; a chat message
+ * matching a command prompt selects the command flow. Anything unexpected times out and fails
+ * closed. The command flow's first action with REGISTER reads the register prompt; LOGIN reads
+ * the login prompt.
  */
 final class UpstreamAuthenticator {
 
@@ -50,8 +59,8 @@ final class UpstreamAuthenticator {
     Verdict verify(Request request) {
         AtomicReference<Verdict> outcome = new AtomicReference<>(Verdict.UPSTREAM_TIMEOUT);
         CompletableFuture<Verdict> done = new CompletableFuture<>();
+        AtomicBoolean responded = new AtomicBoolean(false);
         MinecraftProtocol protocol = new MinecraftProtocol(request.username());
-        List<Runnable> disposables = new ArrayList<>();
         try {
             Session session = ClientNetworkSessionFactory.factory()
                     .setAddress(host, port)
@@ -60,27 +69,41 @@ final class UpstreamAuthenticator {
             session.addListener(new SessionAdapter() {
                 @Override
                 public void connected(ConnectedEvent event) {
-                    // configuration begins immediately; nothing to send until the dialog arrives
                 }
 
                 @Override
-                public void packetReceived(Session session1, Packet packet) {
-                    if (packet instanceof ClientboundShowDialogConfigurationPacket showDialog
-                            && showDialog.getDialog() != null) {
-                        respondToDialog(session1, showDialog.getDialog(), request, outcome);
-                    } else if (packet instanceof ClientboundShowDialogGamePacket showDialogGame
-                            && showDialogGame.getDialog() != null) {
-                        // Holder may wrap an inline NbtMap (id-based registry dialogs cannot
-                        // be answered inline and fall through to the timeout path)
-                        if (showDialogGame.getDialog().isCustom()
-                                && showDialogGame.getDialog().custom() instanceof NbtMap nbt) {
-                            respondToDialog(session1, nbt, request, outcome);
+                public void packetReceived(Session s, Packet packet) {
+                    if (packet instanceof ClientboundShowDialogConfigurationPacket show
+                            && show.getDialog() != null) {
+                        // Evidence: this upstream uses dialogs. Answer once.
+                        if (responded.compareAndSet(false, true)) {
+                            respondToDialog(s, show.getDialog(), request);
+                        }
+                    } else if (packet instanceof ClientboundShowDialogGamePacket showGame
+                            && showGame.getDialog() != null
+                            && showGame.getDialog().isCustom()
+                            && showGame.getDialog().custom() instanceof NbtMap nbt) {
+                        if (responded.compareAndSet(false, true)) {
+                            respondToDialog(s, nbt, request);
                         }
                     } else if (packet instanceof ClientboundSystemChatPacket chat) {
                         String text = PlainText.of(chat.getContent());
+                        // If no dialog arrived and the text matches a command prompt, switch to
+                        // the command flow and send the matching command line.
+                        if (!responded.getAndSet(true)) {
+                            if (CommandFlow.respond(s, text, request)) {
+                                // command sent; let the reply text classify the outcome
+                                return;
+                            }
+                            // Not a command prompt the worker understands (could be MOTD etc.);
+                            // keep listening, other chat may still be the prompt.
+                            responded.set(false);
+                            return;
+                        }
                         Classifier.classify(text, outcome, done);
                     } else if (packet instanceof ClientboundClearDialogPacket) {
-                        // dialog closed: outcome hinges on what follows; timeout catches limbo
+                        // dialog closed by the server: either it logged us in or rejected; the
+                        // following evidence (chat/disconnect) classifies
                     } else if (packet instanceof ClientboundDisconnectPacket
                             || packet instanceof ClientboundLoginDisconnectPacket) {
                         String reason = packet instanceof ClientboundDisconnectPacket d
@@ -96,31 +119,24 @@ final class UpstreamAuthenticator {
                     Classifier.onDisconnect("", outcome, done);
                 }
             });
-            org.geysermc.mcprotocollib.network.ClientSession clientSession = (org.geysermc.mcprotocollib.network.ClientSession) session;
+            org.geysermc.mcprotocollib.network.ClientSession clientSession =
+                    (org.geysermc.mcprotocollib.network.ClientSession) session;
             clientSession.connect(true);
             done.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
             outcome.set(Verdict.UPSTREAM_TIMEOUT);
         } catch (Exception e) {
             outcome.set(Verdict.UPSTREAM_DOWN);
-        } finally {
-            disposables.forEach(Runnable::run);
         }
         return outcome.get() == null ? Verdict.UPSTREAM_DOWN : outcome.get();
     }
 
     /**
-     * Pulls the action id and input field ids from the dialog NBT and answers with a custom
-     * click carrying the username/password input values.
+     * Fills the dialog's text inputs and clicks the submit action. The first text input
+     * receives the password; a second receives the username repeat (register-confirm style).
+     * Unknown shapes leave the dialog unanswered - controlled timeout, fail closed.
      */
-    private void respondToDialog(Session session, NbtMap dialog, Request request,
-                                 AtomicReference<Verdict> outcome) {
-        // Dialog NBT shape (Minecraft "minecraft:custom" dialog): inputs list of
-        // {type, key/name, ...}, body, and action button with action id for custom action
-        // dialogs. Field ids are not universally named, so this walks the structure and
-        // fills the first text input with the password, second (if any) with the username
-        // confirmation. An unexpected shape leaves the dialog unanswered and the overall
-        // attempt times out - fail closed.
+    private void respondToDialog(Session session, NbtMap dialog, Request request) {
         try {
             NbtMapBuilder payload = NbtMap.builder();
             List<NbtMap> inputs = dialog.getList("inputs", NbtType.COMPOUND, List.of());
@@ -134,19 +150,16 @@ final class UpstreamAuthenticator {
                 }
             }
             if (filled == 0) {
-                // No text input understood; leave dialog unanswered -> controlled timeout.
                 return;
             }
             String actionId = dialog.getString("action", "minecraft:custom/submit");
             session.send(new org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomClickActionPacket(
                     net.kyori.adventure.key.Key.key(actionId.replaceFirst("^minecraft:", "")), payload.build()));
-            outcome.set(Verdict.UPSTREAM_TIMEOUT); // stays until evidence arrives
         } catch (Exception e) {
-            // Unexpected NBT shape or send failure: deny via timeout/down and stop.
+            // deny via timeout/down
         }
     }
 
-    /** Freelance helpers shared across the listeners above; kept trivial on purpose. */
     private static final class PlainText {
         static String of(net.kyori.adventure.text.Component component) {
             return net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
@@ -154,19 +167,48 @@ final class UpstreamAuthenticator {
         }
     }
 
-    /** Text-based classification, mirrored for disconnect reasons. */
+    /** evidence-based switch to the plain /register / /login command flow. */
+    private static final class CommandFlow {
+        /**
+         * Returns true if the text matched a known register/login prompt and the equivalent
+         * command was sent.
+         */
+        static boolean respond(Session session, String text, Request request) {
+            String lower = text.toLowerCase();
+            if (lower.contains("register")) {
+                sendCommand(session, request.action() == Request.Action.REGISTER
+                        ? "/register " + request.passwordAsString().orElse("") + " " + request.passwordAsString().orElse("")
+                        : "/login " + request.passwordAsString().orElse(""));
+                return true;
+            }
+            if (lower.contains("log in") || lower.contains("login")) {
+                sendCommand(session, "/login " + request.passwordAsString().orElse(""));
+                return true;
+            }
+            return false;
+        }
+
+        private static void sendCommand(Session session, String command) {
+            // ServerboundChatCommandPacket carries the command without the leading slash;
+            // the 26.3 API takes just the command string and timestamps/signs internally.
+            session.send(new ServerboundChatCommandPacket(command.substring(1)));
+        }
+    }
+
+    /** Shared classifier. */
     private static final class Classifier {
         static void classify(String text, AtomicReference<Verdict> outcome, CompletableFuture<Verdict> done) {
             String lower = text.toLowerCase();
-            if (lower.contains("logged in") || lower.contains("successfully") || lower.contains("welcome")) {
+            if (lower.contains("logged in") || lower.contains("successfully") || lower.contains("welcome")
+                    || lower.contains("registered successfully")) {
                 outcome.set(Verdict.SUCCESS);
                 done.complete(outcome.get());
             } else if (lower.contains("wrong password") || lower.contains("incorrect")
-                    || lower.contains("invalid password")) {
+                    || lower.contains("invalid password") || lower.contains("already registered")) {
                 outcome.set(Verdict.WRONG_PASSWORD);
                 done.complete(outcome.get());
-            } else if (lower.contains("register") || lower.contains("unknown user")
-                    || lower.contains("user not registered") || lower.contains("not registered")) {
+            } else if (lower.contains("unknown user") || lower.contains("user not registered")
+                    || lower.contains("not registered")) {
                 outcome.set(Verdict.NO_ACCOUNT);
                 done.complete(outcome.get());
             }
