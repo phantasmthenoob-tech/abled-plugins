@@ -30,5 +30,8 @@ public final class WorkerMain {
         BridgeServer server = new BridgeServer(controlPort, handler);
         server.start();
         System.out.println("READY");
+        // The network threads are daemons; returning from main would end the JVM immediately
+        // and the plugin would only ever see connection-refused. Block the main thread forever.
+        Thread.currentThread().join();
     }
 }
