@@ -9,10 +9,29 @@ import java.nio.file.Path;
 /**
  * LoginGuard: first join requires /register, later joins require /login. Unauthenticated players
  * cannot move, break, place, open inventories, chat, or run other commands.
+ *
+ * <p>Bridge mode: instead of checking passwords locally, each submit is verified against the
+ * configured upstream server through the headless worker (auth-bridge-worker). Config keys in
+ * config.yml:
+ *
+ * <pre>
+ * bridge:
+ *   enabled: true
+ *   control-port: 4519        # loopback port between plugin and worker
+ *   upstream-host: the.host
+ *   upstream-port: 25565
+ *   upstream-timeout-ms: 15000
+ * </pre>
+ *
+ * <p>With {@code bridge.enabled: false} behaviour falls back to the local logins folder exactly
+ * as before. Fail-closed: any bridge outage denies instead of letting people in.
  */
 public final class LoginGuardPlugin extends JavaPlugin {
 
+    enum Mode { REGISTER, LOGIN }
+
     private LoginManager manager;
+    private WorkerSupervisor supervisor;
 
     @Override
     public void onEnable() {
@@ -26,20 +45,32 @@ public final class LoginGuardPlugin extends JavaPlugin {
             return;
         }
 
-        manager = new LoginManager(this, store);
         boolean debug = getConfig().getBoolean("debug", false);
-        if (debug) {
-            getLogger().info("debug logging enabled via config.yml (debug: true)");
+        boolean bridgeEnabled = getConfig().getBoolean("bridge.enabled", false);
+        int controlPort = getConfig().getInt("bridge.control-port", 4519);
+        String upstreamHost = getConfig().getString("bridge.upstream-host", "127.0.0.1");
+        int upstreamPort = getConfig().getInt("bridge.upstream-port", 25565);
+        long upstreamTimeout = getConfig().getLong("bridge.upstream-timeout-ms", 15000);
+
+        manager = new LoginManager(this, store);
+
+        if (bridgeEnabled) {
+            supervisor = new WorkerSupervisor(getDataFolder().toPath(), controlPort, upstreamHost,
+                    upstreamPort, upstreamTimeout, msg -> getLogger().info(msg));
+            if (!supervisor.ensureRunning()) {
+                getLogger().severe("bridge enabled but the worker could not start; failing closed");
+            }
+            manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
+                    msg -> getLogger().info(msg)), store);
+            getLogger().info("bridge mode: verifying against " + upstreamHost + ":" + upstreamPort);
         }
+
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
-        // Every 30s: repeat the prompt so an unauthenticated player always has instructions
-        // on screen, and (diagnostically) prove the plugin is alive - if these reminders stop,
-        // LoginGuard is not enabled, which is itself a lockdown failure worth noticing.
         getServer().getScheduler().runTaskTimer(this, () ->
                 getServer().getOnlinePlayers().forEach(player -> {
                     if (!manager.isAuthenticated(player.getUniqueId())) {
-                        String note = store.exists(player.getUniqueId())
+                        String note = (bridgeEnabled || store.exists(player.getUniqueId()))
                                 ? "please /login <password>"
                                 : "please /register <password> <confirm>";
                         player.sendActionBar(note);
@@ -61,6 +92,8 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // nothing to flush: every record is written atomically when created
+        if (supervisor != null) {
+            supervisor.shutdown();
+        }
     }
 }

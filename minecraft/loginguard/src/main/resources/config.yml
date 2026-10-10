@@ -1,7 +1,24 @@
 # LoginGuard configuration
 #
 # debug: when true, every join/quit/login-attempt/move-correction/teleport/damage the
-# lockdown reacts to is written to the server console. That answers "who moved me and
-# when" the moment it happens: a move-correction logged right before the kick names the
-# trigger; nothing logged means the kick came from somewhere else entirely.
+# lockdown reacts to is written to the server console.
 debug: false
+
+# Bridge mode: verify passwords through a headless Minecraft client that connects
+# to the *upstream* server (an existing offline-mode AuthMe server) and completes
+# its login dialog. When bridge.enabled is false, passwords are checked against
+# the local logins folder exactly as before. When true:
+#
+#   1. The plugin spawns the bundled worker (plugins/LoginGuard/worker/AuthBridgeWorker.jar)
+#   2. Each /register and /login attempts the credentials upstream before unlocking:
+#      SUCCESS -> unlocked, local record saved/refreshed in logins/
+#      WRONG_PASSWORD -> denied
+#      NO_ACCOUNT (login) -> denied with a hint to /register
+#      UPSTREAM_TIMEOUT / UPSTREAM_DOWN -> DENIED (fails closed)
+#
+bridge:
+  enabled: false
+  control-port: 4519          # loopback port between plugin and worker; do not expose
+  upstream-host: 127.0.0.1
+  upstream-port: 25565
+  upstream-timeout-ms: 15000
