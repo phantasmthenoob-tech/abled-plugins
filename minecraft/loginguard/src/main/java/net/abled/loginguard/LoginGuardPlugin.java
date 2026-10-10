@@ -59,10 +59,14 @@ public final class LoginGuardPlugin extends JavaPlugin {
                     upstreamPort, upstreamTimeout, msg -> getLogger().info(msg));
             if (!supervisor.ensureRunning()) {
                 getLogger().severe("bridge enabled but the worker could not start; failing closed");
+            } else {
+                getLogger().info("worker process spawned (upstream " + upstreamHost + ":" + upstreamPort + ")");
             }
             manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
                     msg -> getLogger().info(msg)), store);
             getLogger().info("bridge mode: verifying against " + upstreamHost + ":" + upstreamPort);
+        } else {
+            getLogger().info("bridge mode: DISABLED (set bridge.enabled: true in config.yml) ");
         }
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
