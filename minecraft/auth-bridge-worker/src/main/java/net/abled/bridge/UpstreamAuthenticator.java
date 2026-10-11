@@ -195,21 +195,30 @@ final class UpstreamAuthenticator {
             detail = verdict.name();
         }
         return new Outcome(verdict, detail);
-    }
-
-    /** Readable one-liner describing a dialog NBT: title, action id and input types. */
+    }    /** Readable one-liner describing a dialog NBT: type, submit action and input keys. */
     private static final class DialogSummary {
         static String of(NbtMap dialog) {
             StringBuilder s = new StringBuilder("(");
-            s.append("action=").append(dialog.getString("action", "-"));
-            s.append(", inputs=");
+            s.append("type=").append(dialog.getString("type", "?"));
+            NbtMap click = DialogActions.findClickAction(dialog);
+            if (click != null) {
+                s.append(", submit=").append(click.getString("type", "?"));
+                if (click.containsKey("id")) {
+                    s.append("(").append(click.getString("id", "")).append(")");
+                } else if (click.containsKey("template")) {
+                    s.append("(template)");
+                }
+            } else {
+                s.append(", submit=none");
+            }
             List<NbtMap> inputs = dialog.getList("inputs", NbtType.COMPOUND, List.of());
-            s.append("[");
+            s.append(", inputs=[");
             for (int i = 0; i < inputs.size(); i++) {
                 if (i > 0) {
                     s.append(",");
                 }
-                s.append(inputs.get(i).getString("type", "?"));
+                s.append(inputs.get(i).getString("type", "?"))
+                        .append(":").append(inputs.get(i).getString("key", "?"));
             }
             s.append("]");
             s.append(")");
@@ -218,31 +227,143 @@ final class UpstreamAuthenticator {
     }
 
     /**
+     * Locates and executes the submit click action of a dialog per the 1.21.6+ dialog format.
+     *
+     * <p>A dialog's buttons are click-action compounds ({@code type} namespaced key) reachable
+     * from {@code action} (notice), {@code yes}/{@code no} (confirmation) or the {@code actions}
+     * list (multi_action, entries either the action itself or a button wrapping it in {@code
+     * action}). Two actionable types exist: {@code minecraft:custom} (id + additions) is answered
+     * with a CustomClickAction carrying the input values merged into the additions payload;
+     * {@code minecraft:dynamic/run_command} carries a macro template whose {@code $(key)} spots
+     * are filled from the inputs and is answered with a chat command. Pure navigation types
+     * (open_url, show_dialog, ...) are skipped, and no viable action fails closed.
+     */
+    private static final class DialogActions {
+
+        static NbtMap findClickAction(NbtMap dialog) {
+            List<NbtMap> candidates = new ArrayList<>();
+            NbtMap action = dialog.getCompound("action");
+            if (!action.isEmpty()) {
+                candidates.add(action);
+            }
+            NbtMap yes = dialog.getCompound("yes");
+            if (!yes.isEmpty()) {
+                candidates.add(yes);
+            }
+            NbtMap no = dialog.getCompound("no");
+            if (!no.isEmpty()) {
+                candidates.add(no);
+            }
+            for (NbtMap entry : dialog.getList("actions", NbtType.COMPOUND, List.of())) {
+                NbtMap wrapped = entry.getCompound("action");
+                candidates.add(wrapped.isEmpty() ? entry : wrapped);
+            }
+            for (NbtMap candidate : candidates) {
+                if ("minecraft:custom".equals(candidate.getString("type", ""))) {
+                    return candidate;
+                }
+            }
+            for (NbtMap candidate : candidates) {
+                if ("minecraft:dynamic/run_command".equals(candidate.getString("type", ""))) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /** Text inputs only: first gets the password, later ones get it again unless the key
+         * names a username field (register-confirm style), which then gets the username. */
+        static java.util.Map<String, String> inputValues(List<NbtMap> inputs, Request request) {
+            java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
+            String password = request.passwordAsString().orElse("");
+            int index = 0;
+            for (NbtMap input : inputs) {
+                if (!input.getString("type", "").toLowerCase().contains("text")) {
+                    continue;
+                }
+                String key = input.getString("key", "");
+                if (index == 0) {
+                    values.put(key, password);
+                } else {
+                    String lower = key.toLowerCase();
+                    if (lower.contains("user") || lower.contains("name") || lower.contains("player")
+                            || lower.contains("nick")) {
+                        values.put(key, request.username());
+                    } else {
+                        values.put(key, password);
+                    }
+                }
+                index++;
+            }
+            return values;
+        }
+
+        /** Sends the answer for this click action; returns false if the shape is unusable. */
+        static boolean send(Session session, NbtMap click, java.util.Map<String, String> values,
+                            java.util.function.Consumer<String> observer) {
+            String kind = click.getString("type", "");
+            if ("minecraft:custom".equals(kind)) {
+                String id = click.getString("id", "");
+                NbtMapBuilder payload = NbtMap.builder();
+                NbtMap additions = click.getCompound("additions");
+                for (java.util.Map.Entry<String, Object> field : additions.entrySet()) {
+                    payload.put(field.getKey(), field.getValue());
+                }
+                values.forEach(payload::putString);
+                session.send(new org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomClickActionPacket(
+                        net.kyori.adventure.key.Key.key(id), payload.build()));
+                // The id is observable; the payload values are the password and are not.
+                observer.accept("[upstream] dialog answered: custom click " + id);
+                return true;
+            }
+            if ("minecraft:dynamic/run_command".equals(kind)) {
+                String template = click.getString("template", "");
+                java.util.regex.Matcher macros =
+                        java.util.regex.Pattern.compile("\\$\\(([^)]+)\\)").matcher(template);
+                StringBuilder command = new StringBuilder();
+                while (macros.find()) {
+                    String key = macros.group(1);
+                    macros.appendReplacement(command,
+                            java.util.regex.Matcher.quoteReplacement(values.getOrDefault(key, "")));
+                }
+                macros.appendTail(command);
+                String filled = command.toString();
+                if (filled.startsWith("/")) {
+                    filled = filled.substring(1);
+                }
+                session.send(new ServerboundChatCommandPacket(filled));
+                // Never log the filled command: it contains the password.
+                observer.accept("[upstream] dialog answered: dynamic/run_command ("
+                        + values.size() + " inputs filled)");
+                return true;
+            }
+            return false;
+        }
+    }
+
+
+
+    /**
      * Fills the dialog's text inputs and clicks the submit action. The first text input
      * receives the password; a second receives the username repeat (register-confirm style).
      * Unknown shapes leave the dialog unanswered - controlled timeout, fail closed.
      */
     private void respondToDialog(Session session, NbtMap dialog, Request request) {
         try {
-            NbtMapBuilder payload = NbtMap.builder();
             List<NbtMap> inputs = dialog.getList("inputs", NbtType.COMPOUND, List.of());
-            int filled = 0;
-            for (NbtMap input : inputs) {
-                String type = input.getString("type", "");
-                if (type.startsWith("minecraft:text")) {
-                    String key = input.getString("key", "input" + filled);
-                    payload.putString(key, filled == 0 ? request.passwordAsString().orElse("") : request.username());
-                    filled++;
-                }
-            }
-            if (filled == 0) {
+            java.util.Map<String, String> values = DialogActions.inputValues(inputs, request);
+            if (values.isEmpty()) {
+                observer.accept("[upstream] dialog has no text inputs; cannot answer");
                 return;
             }
-            String actionId = dialog.getString("action", "minecraft:custom/submit");
-            session.send(new org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomClickActionPacket(
-                    net.kyori.adventure.key.Key.key(actionId.replaceFirst("^minecraft:", "")), payload.build()));
+            NbtMap click = DialogActions.findClickAction(dialog);
+            if (click == null) {
+                observer.accept("[upstream] dialog has no custom/dynamic submit action; cannot answer");
+                return;
+            }
+            DialogActions.send(session, click, values, observer);
         } catch (Exception e) {
-            // deny via timeout/down
+            observer.accept("[upstream] dialog answer failed: " + e.getClass().getSimpleName());
         }
     }
 
