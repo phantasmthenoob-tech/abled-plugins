@@ -85,12 +85,11 @@ public final class LoginGuardPlugin extends JavaPlugin {
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
         // Chat-prompt nagging: every 5 seconds, any still-locked player gets the reminder.
+        // Chat nagging: every 5 seconds, purely from memory - the repeating loop must not do
+        // per-player disk reads (LoginStore record checks are file reads on the main thread).
         getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(player -> {
             if (!manager.isAuthenticated(player.getUniqueId())) {
-                boolean loginScreen = bridgeEnabled || store.exists(player.getUniqueId());
-                player.sendMessage(loginScreen
-                        ? "\u00A76please /login <password> to play"
-                        : "\u00A76please /register <password> <confirm> to play");
+                player.sendMessage(manager.promptFor(player.getUniqueId()));
             }
         }), 100L, 100L);
 

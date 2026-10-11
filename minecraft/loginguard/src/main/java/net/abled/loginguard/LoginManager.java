@@ -4,10 +4,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -24,7 +23,11 @@ final class LoginManager {
 
     private final JavaPlugin plugin;
     private final LoginStore store;
-    private final Set<UUID> authenticated = new HashSet<>();
+    // Chat events fire on an async thread while verdicts mutate on the main thread; a plain
+    // HashSet would be cross-thread data corruption in the making.
+    private final Set<UUID> authenticated = ConcurrentHashMap.newKeySet();
+    /** Who has a saved record: filled at join (one read), updated on register/login success. */
+    private final Set<UUID> knownRecords = ConcurrentHashMap.newKeySet();
     private Consumer<String> log;
 
     /** Optional bridge; null in local-only mode. */
@@ -51,15 +54,25 @@ final class LoginManager {
     }
 
     void handleJoin(Player player) {
-        authenticated.remove(player.getUniqueId());
-        boolean recordExists = store.exists(player.getUniqueId());
-        player.sendMessage(recordExists || bridge != null
-                ? "\u00A76please \u00A76/login <password> to play"
-                : "\u00A76please /register <password> <confirm> to play");
+        UUID id = player.getUniqueId();
+        authenticated.remove(id);
+        // The single record read per join; the repeating nag task then runs purely from memory.
+        if (store.exists(id)) {
+            knownRecords.add(id);
+        }
+        player.sendMessage(promptFor(id));
+    }
+
+    /** The gold reminder line for a locked player: login or register. Mainly reused by the nag loop. */
+    String promptFor(UUID id) {
+        return knownRecords.contains(id) || bridge != null
+                ? "\u00A76please /login <password> to play"
+                : "\u00A76please /register <password> <confirm> to play";
     }
 
     void handleQuit(UUID id) {
         authenticated.remove(id);
+        knownRecords.remove(id);
     }
 
     void register(Player player, String password, String confirm) {
@@ -80,6 +93,7 @@ final class LoginManager {
             }
             try {
                 store.create(player.getUniqueId(), player.getName(), password);
+                knownRecords.add(player.getUniqueId());
                 authenticated.add(player.getUniqueId());
                 player.sendMessage("\u00A7aregistered, welcome");
             } catch (IOException e) {
@@ -144,6 +158,7 @@ final class LoginManager {
             }
             try {
                 bridgeStore.create(player.getUniqueId(), player.getName(), password);
+                knownRecords.add(player.getUniqueId());
             } catch (IOException e) {
                 player.sendMessage("\u00A7cfailed to save the local account record, try again");
                 log.accept("registration save failed: " + e.getMessage());
@@ -158,6 +173,7 @@ final class LoginManager {
                     player.sendMessage("\u00A7awelcome back");
                     try {
                         bridgeStore.create(player.getUniqueId(), player.getName(), password);
+                        knownRecords.add(player.getUniqueId());
                     } catch (IOException e) {
                         log.accept("failed to refresh login record: " + e.getMessage());
                     }
