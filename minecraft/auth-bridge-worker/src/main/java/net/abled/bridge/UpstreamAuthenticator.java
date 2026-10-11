@@ -63,12 +63,16 @@ final class UpstreamAuthenticator {
 
     /** Flattens a raw upstream line into one log-safe single-width string, capped. */
     private static String safe(String raw) {
+        return safe(raw, 300);
+    }
+
+    private static String safe(String raw, int cap) {
         if (raw == null) {
             return "";
         }
         String s = raw.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
         s = s.replaceAll("\\s+", " ").trim();
-        return s.length() > 300 ? s.substring(0, 300) + "..." : s;
+        return s.length() > cap ? s.substring(0, cap) + "..." : s;
     }
 
     /** The verifier's outcome: the classified verdict plus the evidence that produced it. */
@@ -201,8 +205,9 @@ final class UpstreamAuthenticator {
             StringBuilder s = new StringBuilder("(");
             s.append("type=").append(dialog.getString("type", "?"));
             // Raw structure of the dialog itself helps when no submit is found: password
-            // values are never present in the NBT, only keys and macro templates.
-            s.append(", raw=").append(safe(dialog.toString()));
+            // values are never present in the NBT, only keys and macro templates. A wider cap
+            // than chat lines, since the actions/labels live at the far end of the compound.
+            s.append(", raw=").append(safe(dialog.toString(), 2000));
             NbtMap click = DialogActions.findClickAction(dialog);
             if (click != null) {
                 s.append(", submit=").append(click.getString("type", "?"));
@@ -256,38 +261,41 @@ final class UpstreamAuthenticator {
                 candidates.add(wrapped.isEmpty() ? entry : wrapped);
             }
             for (NbtMap candidate : candidates) {
-                if ("minecraft:custom".equals(candidate.getString("type", ""))) {
-                    return candidate;
-                }
-            }
-            for (NbtMap candidate : candidates) {
-                if ("minecraft:dynamic/run_command".equals(candidate.getString("type", ""))) {
+                if (isAnswerable(candidate)) {
                     return candidate;
                 }
             }
             // Known shapes failed: search the whole dialog tree for any clickable compound.
             // Bounded depth keeps a pathological dialog from becoming an unbounded scan.
-            NbtMap found = search(dialog, "minecraft:custom", 0);
-            return found != null ? found : search(dialog, "minecraft:dynamic/run_command", 0);
+            NbtMap found = searchAnswerable(dialog, 0);
+            return found;
         }
 
-        private static NbtMap search(NbtMap node, String want, int depth) {
+        /** Click types the worker can act on. Cancel-type navigation is never answerable. */
+        private static boolean isAnswerable(NbtMap candidate) {
+            String kind = candidate.getString("type", "");
+            return "minecraft:custom".equals(kind)
+                    || "minecraft:dynamic/custom".equals(kind)
+                    || "minecraft:dynamic/run_command".equals(kind);
+        }
+
+        private static NbtMap searchAnswerable(NbtMap node, int depth) {
             if (depth > 8) {
                 return null;
             }
-            if (want.equals(node.getString("type", ""))) {
+            if (isAnswerable(node)) {
                 return node;
             }
             for (Object value : node.values()) {
                 if (value instanceof NbtMap nested) {
-                    NbtMap found = search(nested, want, depth + 1);
+                    NbtMap found = searchAnswerable(nested, depth + 1);
                     if (found != null) {
                         return found;
                     }
                 } else if (value instanceof List<?> list) {
                     for (Object item : list) {
                         if (item instanceof NbtMap nested) {
-                            NbtMap found = search(nested, want, depth + 1);
+                            NbtMap found = searchAnswerable(nested, depth + 1);
                             if (found != null) {
                                 return found;
                             }
@@ -329,13 +337,12 @@ final class UpstreamAuthenticator {
         static boolean send(Session session, NbtMap click, java.util.Map<String, String> values,
                             java.util.function.Consumer<String> observer) {
             String kind = click.getString("type", "");
-            if ("minecraft:custom".equals(kind)) {
+            if ("minecraft:custom".equals(kind) || "minecraft:dynamic/custom".equals(kind)) {
                 String id = click.getString("id", "");
                 NbtMapBuilder payload = NbtMap.builder();
-                NbtMap additions = click.getCompound("additions");
-                for (java.util.Map.Entry<String, Object> field : additions.entrySet()) {
-                    payload.put(field.getKey(), field.getValue());
-                }
+                // dynamic/custom additions may be macro templates over the inputs: $(key)
+                // spots get the typed values, everything else is copied verbatim.
+                fillPayload(payload, click.getCompound("additions"), values);
                 values.forEach(payload::putString);
                 session.send(new org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomClickActionPacket(
                         net.kyori.adventure.key.Key.key(id), payload.build()));
@@ -365,6 +372,53 @@ final class UpstreamAuthenticator {
                 return true;
             }
             return false;
+        }
+
+        /** Copies additions into the payload, expanding $(key) macros from the inputs. */
+        private static void fillPayload(NbtMapBuilder payload, NbtMap additions,
+                                       java.util.Map<String, String> values) {
+            java.util.regex.Matcher macros = null;
+            for (java.util.Map.Entry<String, Object> field : additions.entrySet()) {
+                Object value = field.getValue();
+                if (value instanceof String text && text.contains("$(")) {
+                    if (macros == null) {
+                        macros = java.util.regex.Pattern.compile("\\$\\(([^)]+)\\)").matcher("");
+                    }
+                    macros.reset(text);
+                    StringBuilder filled = new StringBuilder();
+                    while (macros.find()) {
+                        macros.appendReplacement(filled,
+                                java.util.regex.Matcher.quoteReplacement(values.getOrDefault(macros.group(1), "")));
+                    }
+                    macros.appendTail(filled);
+                    payload.putString(field.getKey(), filled.toString());
+                } else if (value instanceof NbtMap nested) {
+                    NbtMapBuilder nestedPayload = NbtMap.builder();
+                    fillPayload(nestedPayload, nested, values);
+                    payload.put(field.getKey(), nestedPayload.build());
+                } else if (value instanceof List<?> list) {
+                    java.util.List<Object> filledList = new ArrayList<>();
+                    for (Object item : list) {
+                        if (item instanceof String text && text.contains("$(")) {
+                            java.util.regex.Matcher listMacros =
+                                    java.util.regex.Pattern.compile("\\$\\(([^)]+)\\)").matcher(text);
+                            StringBuilder resolved = new StringBuilder();
+                            while (listMacros.find()) {
+                                listMacros.appendReplacement(resolved,
+                                        java.util.regex.Matcher.quoteReplacement(
+                                                values.getOrDefault(listMacros.group(1), "")));
+                            }
+                            listMacros.appendTail(resolved);
+                            filledList.add(resolved.toString());
+                        } else {
+                            filledList.add(item);
+                        }
+                    }
+                    payload.put(field.getKey(), filledList);
+                } else {
+                    payload.put(field.getKey(), value);
+                }
+            }
         }
     }
 
