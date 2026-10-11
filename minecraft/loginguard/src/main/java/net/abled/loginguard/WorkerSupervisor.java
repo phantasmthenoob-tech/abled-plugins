@@ -23,6 +23,7 @@ final class WorkerSupervisor {
     private final long upstreamTimeoutMs;
     private final Consumer<String> logger;
     private Process process;
+    private volatile boolean ready;
 
     WorkerSupervisor(Path pluginDataFolder, int controlPort, String upstreamHost, int upstreamPort,
                      long upstreamTimeoutMs, Consumer<String> logger) {
@@ -37,8 +38,9 @@ final class WorkerSupervisor {
     /** Starts (or restarts) the worker. Safe to call repeatedly; idempotent while alive. */
     synchronized boolean ensureRunning() {
         if (process != null && process.isAlive()) {
-            return true;
+            return ready;
         }
+        ready = false;
         if (!Files.isRegularFile(workerJar)) {
             logger.accept("worker jar missing at " + workerJar + " - verification will fail closed");
             return false;
@@ -51,28 +53,71 @@ final class WorkerSupervisor {
                     String.valueOf(upstreamTimeoutMs))
                     .redirectErrorStream(true)
                     .start();
+            // The stdout reader must exist before the READY wait: it is what sets ready.
             Thread reader = new Thread(() -> {
                 try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while (process.isAlive() && (line = in.readLine()) != null) {
                         if (line.contains("READY")) {
+                            ready = true;
                             logger.accept("worker ready on port " + controlPort);
                         } else if (!line.contains("password")) { // never log secrets, even if the worker leaked
                             logger.accept("worker: " + line);
                         }
                     }
+                    // The worker exited: forget READY so a revive respawns it.
+                    ready = false;
                 } catch (IOException e) {
                     // stream closed with the process; nothing further
                 }
             }, "login-guard-worker-stdout");
             reader.setDaemon(true);
             reader.start();
-            return true;
+            // The process being alive is not the worker being up: the JVM takes a moment to
+            // bind the control port, and a /login in that window saw connection refused.
+            // READY (printed after the port binds) is the real signal; wait for it, bounded.
+            long deadline = System.currentTimeMillis() + 15_000;
+            while (System.currentTimeMillis() < deadline) {
+                if (ready) {
+                    return true;
+                }
+                if (process == null || !process.isAlive()) {
+                    logger.accept("worker died before READY; verification will fail closed");
+                    process = null;
+                    return false;
+                }
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            logger.accept("worker did not reach READY within 15s; verification will fail closed");
+            return false;
         } catch (IOException e) {
             logger.accept("worker spawn failed: " + e.getMessage());
             process = null;
             return false;
         }
+    }
+
+    /**
+     * Brings the worker back after an unexpected death. Idempotent while it is already live and
+     * ready; returns false when the jar is missing or the respawn never reaches READY.
+     */
+    synchronized boolean revive() {
+        if (process != null && process.isAlive() && ready) {
+            return true;
+        }
+        if (process != null && process.isAlive()) {
+            // half-started (no READY in 15s) or wedged: clear it and respawn
+            process.destroy();
+            process.destroyForcibly();
+            process = null;
+        }
+        logger.accept("worker not reachable; respawning");
+        return ensureRunning();
     }
 
     synchronized void shutdown() {
