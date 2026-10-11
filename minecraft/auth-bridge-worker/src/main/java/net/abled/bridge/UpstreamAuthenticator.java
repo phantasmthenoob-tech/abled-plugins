@@ -11,6 +11,9 @@ import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundShowDialogGamePacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundSystemChatPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundClearDialogPacket;
+import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundResourcePackPushPacket;
+import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundResourcePackPacket;
+import org.geysermc.mcprotocollib.protocol.data.game.ResourcePackStatus;
 import org.geysermc.mcprotocollib.protocol.packet.login.clientbound.ClientboundLoginDisconnectPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundDisconnectPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket;
@@ -135,6 +138,13 @@ final class UpstreamAuthenticator {
                             return;
                         }
                         Classifier.classify(text, outcome, done);
+                    } else if (packet instanceof ClientboundResourcePackPushPacket pack) {
+                        // A resource pack blocks the configuration phase until the client
+                        // answers; without this the worker stalls before ever seeing the
+                        // auth prompt. Decline unconditionally and keep the evidence.
+                        s.send(new ServerboundResourcePackPacket(pack.getId(), ResourcePackStatus.DECLINED));
+                        observer.accept("[upstream] resource pack declined (required=" + pack.isRequired()
+                                + ", url=" + safe(pack.getUrl()) + ")");
                     } else if (packet instanceof ClientboundClearDialogPacket) {
                         evidence.set("[dialog closed]");
                         observer.accept("[upstream] dialog cleared");
