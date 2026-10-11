@@ -139,12 +139,18 @@ final class UpstreamAuthenticator {
                         }
                         Classifier.classify(text, outcome, done);
                     } else if (packet instanceof ClientboundResourcePackPushPacket pack) {
-                        // A resource pack blocks the configuration phase until the client
-                        // answers; without this the worker stalls before ever seeing the
-                        // auth prompt. Decline unconditionally and keep the evidence.
-                        s.send(new ServerboundResourcePackPacket(pack.getId(), ResourcePackStatus.DECLINED));
-                        observer.accept("[upstream] resource pack declined (required=" + pack.isRequired()
+                        // This upstream enforces its pack: a DECLINED answer gets the worker
+                        // kicked before the auth prompt ever arrives. The server can only see
+                        // the status replies, never whether the pack actually loaded, so the
+                        // worker plays the vanilla handshake (ACCEPTED, DOWNLOADED,
+                        // SUCCESSFULLY_LOADED) and drops the session after the verdict - the
+                        // pack itself is never needed.
+                        java.util.UUID packId = pack.getId();
+                        observer.accept("[upstream] resource pack accepted (required=" + pack.isRequired()
                                 + ", url=" + safe(pack.getUrl()) + ")");
+                        s.send(new ServerboundResourcePackPacket(packId, ResourcePackStatus.ACCEPTED));
+                        s.send(new ServerboundResourcePackPacket(packId, ResourcePackStatus.DOWNLOADED));
+                        s.send(new ServerboundResourcePackPacket(packId, ResourcePackStatus.SUCCESSFULLY_LOADED));
                     } else if (packet instanceof ClientboundClearDialogPacket) {
                         evidence.set("[dialog closed]");
                         observer.accept("[upstream] dialog cleared");
