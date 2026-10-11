@@ -25,11 +25,23 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(25)
 }
 
+// loginguard is a standalone Gradle build, sibling to auth-bridge-worker in the minecraft/
+// workspace, so cross-project tasks are unavailable; consume the worker's built jar by path.
+val workerJar = rootProject.file("../auth-bridge-worker/build/libs/AuthBridgeWorker.jar")
+
 tasks.processResources {
     val tokens = mapOf("version" to project.version.toString())
     inputs.properties(tokens)
     filesMatching("plugin.yml") {
         expand(tokens)
+    }
+    from(workerJar) {
+        rename { "AuthBridgeWorker.jar" }
+    }
+    doFirst {
+        require(workerJar.isFile) {
+            "missing $workerJar - build it first: cd .. && ./gradlew :auth-bridge-worker:jar"
+        }
     }
 }
 

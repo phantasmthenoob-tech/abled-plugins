@@ -2,17 +2,20 @@ package net.abled.loginguard;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.function.Consumer;
 
 /**
  * Spawns and watches the headless bridge worker as a child process. Restarts it on unexpected
  * exit; the expected lifecycle is exactly one spawn per plugin enable and one kill on disable.
  *
- * <p>The worker jar lives in {@code plugins/LoginGuard/worker/AuthBridgeWorker.jar} - deploy it
- * alongside the plugin jar (or let it ride inside the release). No classpath games.
+ * <p>The worker jar is bundled inside the plugin jar at {@code /AuthBridgeWorker.jar} and is
+ * extracted to {@code plugins/LoginGuard/worker/AuthBridgeWorker.jar} whenever it is missing, so
+ * a deploy is a single jar and a wiped data folder cannot strand the bridge without its worker.
  */
 final class WorkerSupervisor {
 
@@ -41,8 +44,9 @@ final class WorkerSupervisor {
             return ready;
         }
         ready = false;
-        if (!Files.isRegularFile(workerJar)) {
-            logger.accept("worker jar missing at " + workerJar + " - verification will fail closed");
+        if (!Files.isRegularFile(workerJar) && !extractBundledWorker()) {
+            logger.accept("worker jar missing at " + workerJar + " and bundled copy unavailable"
+                    + " - verification will fail closed");
             return false;
         }
         try {
@@ -98,6 +102,26 @@ final class WorkerSupervisor {
         } catch (IOException e) {
             logger.accept("worker spawn failed: " + e.getMessage());
             process = null;
+            return false;
+        }
+    }
+
+    /**
+     * Copies the worker jar bundled inside the plugin jar to the data folder. Returns false
+     * without side effects when the resource is absent (foreign-built jar, shaded fat jar,
+     * or extraction I/O failure).
+     */
+    private boolean extractBundledWorker() {
+        try (InputStream in = WorkerSupervisor.class.getResourceAsStream("/AuthBridgeWorker.jar")) {
+            if (in == null) {
+                return false;
+            }
+            Files.createDirectories(workerJar.getParent());
+            Files.copy(in, workerJar, StandardCopyOption.REPLACE_EXISTING);
+            logger.accept("extracted bundled worker jar to " + workerJar);
+            return true;
+        } catch (IOException e) {
+            logger.accept("could not extract bundled worker jar: " + e.getMessage());
             return false;
         }
     }

@@ -28,3 +28,5 @@ rootProject.name = "medieval"
 include("medieval-api")
 include("medieval-core")
 include("medieval-paper")
+include("auth-bridge-worker")
+include("loginguard")
