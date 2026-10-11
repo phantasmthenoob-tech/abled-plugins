@@ -7,7 +7,8 @@ import java.util.function.Function;
  *
  * <p>Prints {@code READY} on stdout once the control socket is listening, so the supervising
  * plugin knows the worker is live. The worker never logs passwords and never logs request lines;
- * its stdout is diagnostic only.
+ * its stdout is diagnostic only: a JOIN/annotation plus one line for every chat/dialog/reply the
+ * upstream showed, so an unclassified upstream can always be tuned from the console.
  */
 public final class WorkerMain {
 
@@ -21,10 +22,11 @@ public final class WorkerMain {
         int upstreamPort = Integer.parseInt(args[2]);
         long timeoutMs = Long.parseLong(args[3]);
 
-        UpstreamAuthenticator authenticator = new UpstreamAuthenticator(upstreamHost, upstreamPort, timeoutMs);
+        UpstreamAuthenticator authenticator = new UpstreamAuthenticator(upstreamHost, upstreamPort, timeoutMs,
+                line -> System.out.println("[observer] " + line));
         Function<Request, Result> handler = request -> {
-            Verdict verdict = authenticator.verify(request);
-            return new Result(request.requestId(), verdict, verdict.name());
+            UpstreamAuthenticator.Outcome outcome = authenticator.verify(request);
+            return new Result(request.requestId(), outcome.verdict(), outcome.detail());
         };
 
         BridgeServer server = new BridgeServer(controlPort, handler);

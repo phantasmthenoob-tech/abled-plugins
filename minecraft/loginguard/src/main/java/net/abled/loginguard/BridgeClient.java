@@ -54,6 +54,9 @@ final class BridgeClient {
                 logger.accept("bridge: mismatched result id; denying");
                 return Verdict.UPSTREAM_TIMEOUT;
             }
+            if (result.detail() != null && !result.detail().isBlank()) {
+                logger.accept("bridge: worker detail: " + result.detail());
+            }
             return result.verdict();
         } catch (IOException e) {
             logger.accept("bridge: worker unreachable: " + e.getMessage());
