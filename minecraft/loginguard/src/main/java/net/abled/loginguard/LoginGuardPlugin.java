@@ -84,17 +84,22 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
-        // AuthMe-style screens instead of the periodic chat prompt: show on join, and refresh
-        // every 30s for players still locked so the form always sits on top of the client again
-        // if they closed it. Bridge verdicts also re-show (see AuthDialogListener). Status
-        // messages (the small chat lines: wrong password, verifying, welcome) still go to chat.
+        // AuthMe-style screens: shown a second after join (AuthManager.handleJoin schedules it;
+        // same-tick screens race the client's loading state and get dropped), refreshed every
+        // 30s for players still locked so the form always sits on top of the client, and put
+        // back after every failed attempt (see LoginManager.resendDialog). Players still locked
+        // keep getting the /login //register hint in chat from that same repeating task.
         getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(player -> {
             if (!manager.isAuthenticated(player.getUniqueId())) {
-                if (bridgeEnabled || store.exists(player.getUniqueId())) {
+                boolean loginScreen = bridgeEnabled || store.exists(player.getUniqueId());
+                if (loginScreen) {
                     AuthDialogs.showLogin(this, manager, player);
                 } else {
                     AuthDialogs.showRegister(this, manager, player);
                 }
+                player.sendMessage(loginScreen
+                        ? "\u00A7eor type /login <password>"
+                        : "\u00A7eor type /register <password> <confirm>");
             }
         }), 600L, 600L);
 
