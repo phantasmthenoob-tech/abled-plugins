@@ -87,11 +87,23 @@ final class UpstreamAuthenticator {
         CompletableFuture<Verdict> done = new CompletableFuture<>();
         AtomicBoolean responded = new AtomicBoolean(false);
         MinecraftProtocol protocol = new MinecraftProtocol(request.username());
+        final AtomicReference<Session> sessionRef = new AtomicReference<>(null);
+        // Every completion path (verdict or failure) must drop the ghost client at once: a
+        // lingering logged-in session would kick the real player's next upstream login with
+        // "logged in from another location".
+        Runnable leaveNow = () -> {
+            Session live = sessionRef.getAndSet(null);
+            if (live != null) {
+                live.disconnect(net.kyori.adventure.text.Component.text("LoginGuard bridge: verified"), null);
+                observer.accept("[upstream] ghost client left after the verdict");
+            }
+        };
         try {
             Session session = ClientNetworkSessionFactory.factory()
                     .setAddress(host, port)
                     .setProtocol(protocol)
                     .create();
+            sessionRef.set(session);
             session.addListener(new SessionAdapter() {
                 @Override
                 public void connected(ConnectedEvent event) {
@@ -179,6 +191,7 @@ final class UpstreamAuthenticator {
                     Classifier.onDisconnect("", outcome, done);
                 }
             });
+            done.whenComplete((verdict, error) -> leaveNow.run());
             org.geysermc.mcprotocollib.network.ClientSession clientSession =
                     (org.geysermc.mcprotocollib.network.ClientSession) session;
             clientSession.connect(true);
