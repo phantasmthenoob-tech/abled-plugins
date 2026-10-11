@@ -53,39 +53,9 @@ final class LoginManager {
     void handleJoin(Player player) {
         authenticated.remove(player.getUniqueId());
         boolean recordExists = store.exists(player.getUniqueId());
-        // A screen shown inside the join event races the client's loading state and is dropped;
-        // a one-second delay gets the dialog rendered reliably.
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            if (!player.isOnline()) {
-                return;
-            }
-            if (recordExists || bridge != null) {
-                AuthDialogs.showLogin(plugin, this, player);
-            } else {
-                AuthDialogs.showRegister(plugin, this, player);
-            }
-            // The dialog is on their screen; one chat line names the command fallback.
-            player.sendMessage(recordExists || bridge != null
-                    ? "\u00A7eor type /login <password>"
-                    : "\u00A7eor type /register <password> <confirm>");
-        }, 20L);
-    }
-
-    /**
-     * Puts the right screen back up shortly after a failed attempt (wrong password, mismatch,
-     * upstream denial): the submit click closed the dialog, so the locked player is left with
-     * nothing but a chat line otherwise.
-     */
-    private void resendDialog(Player player, boolean loginScreen) {
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            if (player.isOnline() && !authenticated.contains(player.getUniqueId())) {
-                if (loginScreen) {
-                    AuthDialogs.showLogin(plugin, this, player);
-                } else {
-                    AuthDialogs.showRegister(plugin, this, player);
-                }
-            }
-        }, 20L);
+        player.sendMessage(recordExists || bridge != null
+                ? "\u00A76please \u00A76/login <password> to play"
+                : "\u00A76please /register <password> <confirm> to play");
     }
 
     void handleQuit(UUID id) {
@@ -95,12 +65,10 @@ final class LoginManager {
     void register(Player player, String password, String confirm) {
         if (!password.equals(confirm)) {
             player.sendMessage("\u00A7cpasswords do not match");
-            resendDialog(player, false);
             return;
         }
         if (password.length() < 5 || password.length() > 64) {
             player.sendMessage("\u00A7cchoose a 5-64 character password");
-            resendDialog(player, false);
             return;
         }
         if (bridge != null) {
@@ -108,7 +76,6 @@ final class LoginManager {
         } else {
             if (store.exists(player.getUniqueId())) {
                 player.sendMessage("\u00A7caccount already exists, use /login");
-                resendDialog(player, false);
                 return;
             }
             try {
@@ -128,7 +95,6 @@ final class LoginManager {
         } else {
             if (!store.exists(player.getUniqueId())) {
                 player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
-                resendDialog(player, false);
                 return;
             }
             if (store.check(player.getUniqueId(), password)) {
@@ -136,7 +102,6 @@ final class LoginManager {
                 player.sendMessage("\u00A7awelcome back");
             } else {
                 player.sendMessage("\u00A7cwrong password");
-                resendDialog(player, true);
             }
         }
     }
@@ -174,7 +139,6 @@ final class LoginManager {
                 case NO_ACCOUNT -> { /* fresh user, allowed to register locally */ }
                 default -> {
                     player.sendMessage("\u00A7cverification failed (" + verdict + "); try again later");
-                    resendDialog(player, false);
                     return;
                 }
             }
@@ -183,7 +147,6 @@ final class LoginManager {
             } catch (IOException e) {
                 player.sendMessage("\u00A7cfailed to save the local account record, try again");
                 log.accept("registration save failed: " + e.getMessage());
-                resendDialog(player, false);
                 return;
             }
             authenticated.add(player.getUniqueId());
@@ -199,18 +162,9 @@ final class LoginManager {
                         log.accept("failed to refresh login record: " + e.getMessage());
                     }
                 }
-                case WRONG_PASSWORD -> {
-                    player.sendMessage("\u00A7cwrong password");
-                    resendDialog(player, true);
-                }
-                case NO_ACCOUNT -> {
-                    player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
-                    resendDialog(player, false);
-                }
-                case UPSTREAM_TIMEOUT, UPSTREAM_DOWN -> {
-                    player.sendMessage("\u00A7cverification unavailable; try again shortly");
-                    resendDialog(player, true);
-                }
+                case WRONG_PASSWORD -> player.sendMessage("\u00A7cwrong password");
+                case NO_ACCOUNT -> player.sendMessage("\u00A7cno account, use /register <password> <confirm>");
+                case UPSTREAM_TIMEOUT, UPSTREAM_DOWN -> player.sendMessage("\u00A7cverification unavailable; try again shortly");
             }
         }
     }
