@@ -52,11 +52,17 @@ final class LoginManager {
 
     void handleJoin(Player player) {
         authenticated.remove(player.getUniqueId());
-        if (store.exists(player.getUniqueId()) || bridge != null) {
-            player.sendMessage("\u00A7eplease /login <password>");
+        boolean recordExists = store.exists(player.getUniqueId());
+        if (recordExists || bridge != null) {
+            AuthDialogs.showLogin(plugin, this, player);
         } else {
-            player.sendMessage("\u00A7eplease /register <password> <confirm>");
+            AuthDialogs.showRegister(plugin, this, player);
         }
+        // The dialog is on their screen; one chat line names the command fallback for the
+        // console-typing type of player.
+        player.sendMessage(recordExists || bridge != null
+                ? "\u00A7eor type /login <password>"
+                : "\u00A7eor type /register <password> <confirm>");
     }
 
     void handleQuit(UUID id) {

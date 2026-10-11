@@ -84,16 +84,19 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
-        getServer().getScheduler().runTaskTimer(this, () ->
-                getServer().getOnlinePlayers().forEach(player -> {
-                    if (!manager.isAuthenticated(player.getUniqueId())) {
-                        String note = (bridgeEnabled || store.exists(player.getUniqueId()))
-                                ? "please /login <password>"
-                                : "please /register <password> <confirm>";
-                        player.sendActionBar(note);
-                        player.sendMessage(note);
-                    }
-                }), 600L, 600L);
+        // AuthMe-style screens instead of the periodic chat prompt: show on join, and refresh
+        // every 30s for players still locked so the form always sits on top of the client again
+        // if they closed it. Bridge verdicts also re-show (see AuthDialogListener). Status
+        // messages (the small chat lines: wrong password, verifying, welcome) still go to chat.
+        getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(player -> {
+            if (!manager.isAuthenticated(player.getUniqueId())) {
+                if (bridgeEnabled || store.exists(player.getUniqueId())) {
+                    AuthDialogs.showLogin(this, manager, player);
+                } else {
+                    AuthDialogs.showRegister(this, manager, player);
+                }
+            }
+        }), 600L, 600L);
 
         getServer().getPluginManager().registerEvents(listener, this);
         PluginCommand register = getCommand("register");
