@@ -249,7 +249,10 @@ final class UpstreamAuthenticator {
 
     /**
      * Locates and executes the submit click action of a dialog per the 1.21.6+ dialog format.
-     *
+     * Used for both the AuthMe prejoin login dialog (one text input + Login/Cancel buttons) and
+     * the register dialog (password + confirm inputs + Register/Cancel buttons, template
+     * {@code register $(password) $(confirm)}): the click is generic, only the input count
+     * differs.
      * <p>A dialog's buttons are click-action compounds ({@code type} namespaced key) reachable
      * from {@code action} (notice), {@code yes}/{@code no} (confirmation) or the {@code actions}
      * list (multi_action, entries either the action itself or a button wrapping it in {@code
@@ -273,14 +276,19 @@ final class UpstreamAuthenticator {
                 NbtMap wrapped = entry.getCompound("action");
                 candidates.add(wrapped.isEmpty() ? entry : wrapped);
             }
+            // Submit over cancel: an AuthMe prejoin dialog carries a Submit and a Cancel button
+            // of the same click type, and Cancel must never answer for the player.
             for (NbtMap candidate : candidates) {
-                if (isAnswerable(candidate)) {
+                if (isAnswerable(candidate) && !candidate.getString("id", "").toLowerCase().contains("cancel")) {
                     return candidate;
                 }
             }
             // Known shapes failed: search the whole dialog tree for any clickable compound.
             // Bounded depth keeps a pathological dialog from becoming an unbounded scan.
             NbtMap found = searchAnswerable(dialog, 0);
+            if (found != null && found.getString("id", "").toLowerCase().contains("cancel")) {
+                return null; // only the cancel button exists: nothing answerable
+            }
             return found;
         }
 

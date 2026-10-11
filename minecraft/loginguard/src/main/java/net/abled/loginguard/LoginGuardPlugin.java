@@ -39,7 +39,16 @@ public final class LoginGuardPlugin extends JavaPlugin {
         // getConfig() read at code defaults (bridge permanently off) and there is no file to edit.
         saveDefaultConfig();
 
-        Path loginsFolder = getDataFolder().toPath().resolve("logins");
+        Path loginsRoot = getDataFolder().toPath().resolve("logins");
+        boolean bridgeEnabledEarly = getConfig().getBoolean("bridge.enabled", false);
+        String upstreamHostEarly = getConfig().getString("bridge.upstream-host", "127.0.0.1");
+        // One subfolder per upstream: logins/<upstream-ip>/<uuid>.login, so records never
+        // cross between upstreams and tokens stay where they were verified.
+        Path loginsFolder = loginsRoot;
+        if (bridgeEnabledEarly) {
+            loginsFolder = loginsRoot.resolve(sanitizeFolder(upstreamHostEarly));
+            migrateRootRecords(loginsRoot, loginsFolder, upstreamHostEarly);
+        }
         LoginStore store;
         try {
             store = new LoginStore(loginsFolder);
@@ -102,6 +111,30 @@ public final class LoginGuardPlugin extends JavaPlugin {
     public void onDisable() {
         if (supervisor != null) {
             supervisor.shutdown();
+        }
+    }
+
+    /** Safe folder name for a host: dots kept, anything outside [A-Za-z0-9.-] underscored. */
+    private static String sanitizeFolder(String host) {
+        String cleaned = host.replaceAll("[^A-Za-z0-9.-]", "_");
+        return cleaned.isBlank() ? "unknown" : cleaned;
+    }
+
+    /**
+     * Moves flat pre-subfolder records into the upstream folder once. Only files directly in
+     * the root (never already-nested ones) are migrated, so restarts are idempotent.
+     */
+    private void migrateRootRecords(Path root, Path target, String upstreamHost) {
+        if (java.nio.file.Files.isDirectory(root)) {
+            try (var files = java.nio.file.Files.list(root)) {
+                for (Path child : files.filter(p -> p.getFileName().toString().endsWith(".login")).toList()) {
+                    java.nio.file.Files.createDirectories(target);
+                    java.nio.file.Files.move(child, target.resolve(child.getFileName()),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (IOException e) {
+                getLogger().warning("logins migration into " + target.getFileName() + " failed: " + e.getMessage());
+            }
         }
     }
 }
