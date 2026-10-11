@@ -200,6 +200,9 @@ final class UpstreamAuthenticator {
         static String of(NbtMap dialog) {
             StringBuilder s = new StringBuilder("(");
             s.append("type=").append(dialog.getString("type", "?"));
+            // Raw structure of the dialog itself helps when no submit is found: password
+            // values are never present in the NBT, only keys and macro templates.
+            s.append(", raw=").append(safe(dialog.toString()));
             NbtMap click = DialogActions.findClickAction(dialog);
             if (click != null) {
                 s.append(", submit=").append(click.getString("type", "?"));
@@ -242,17 +245,11 @@ final class UpstreamAuthenticator {
 
         static NbtMap findClickAction(NbtMap dialog) {
             List<NbtMap> candidates = new ArrayList<>();
-            NbtMap action = dialog.getCompound("action");
-            if (!action.isEmpty()) {
-                candidates.add(action);
-            }
-            NbtMap yes = dialog.getCompound("yes");
-            if (!yes.isEmpty()) {
-                candidates.add(yes);
-            }
-            NbtMap no = dialog.getCompound("no");
-            if (!no.isEmpty()) {
-                candidates.add(no);
+            for (String key : new String[] {"action", "yes", "no", "exit_action"}) {
+                NbtMap found = dialog.getCompound(key);
+                if (!found.isEmpty()) {
+                    candidates.add(found);
+                }
             }
             for (NbtMap entry : dialog.getList("actions", NbtType.COMPOUND, List.of())) {
                 NbtMap wrapped = entry.getCompound("action");
@@ -266,6 +263,36 @@ final class UpstreamAuthenticator {
             for (NbtMap candidate : candidates) {
                 if ("minecraft:dynamic/run_command".equals(candidate.getString("type", ""))) {
                     return candidate;
+                }
+            }
+            // Known shapes failed: search the whole dialog tree for any clickable compound.
+            // Bounded depth keeps a pathological dialog from becoming an unbounded scan.
+            NbtMap found = search(dialog, "minecraft:custom", 0);
+            return found != null ? found : search(dialog, "minecraft:dynamic/run_command", 0);
+        }
+
+        private static NbtMap search(NbtMap node, String want, int depth) {
+            if (depth > 8) {
+                return null;
+            }
+            if (want.equals(node.getString("type", ""))) {
+                return node;
+            }
+            for (Object value : node.values()) {
+                if (value instanceof NbtMap nested) {
+                    NbtMap found = search(nested, want, depth + 1);
+                    if (found != null) {
+                        return found;
+                    }
+                } else if (value instanceof List<?> list) {
+                    for (Object item : list) {
+                        if (item instanceof NbtMap nested) {
+                            NbtMap found = search(nested, want, depth + 1);
+                            if (found != null) {
+                                return found;
+                            }
+                        }
+                    }
                 }
             }
             return null;
