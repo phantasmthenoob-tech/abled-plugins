@@ -23,19 +23,18 @@ final class WorkerSupervisor {
 
     private final Path workerJar;
     private final int controlPort;
-    private final String upstreamHost;
-    private final int upstreamPort;
+    /** {@code host:port[,host:port...]}; later entries are fallbacks the worker tries in order. */
+    private final String upstreamEndpoints;
     private final long upstreamTimeoutMs;
     private final Consumer<String> logger;
     private Process process;
     private volatile boolean ready;
 
-    WorkerSupervisor(Path pluginDataFolder, int controlPort, String upstreamHost, int upstreamPort,
+    WorkerSupervisor(Path pluginDataFolder, int controlPort, String upstreamEndpoints,
                      long upstreamTimeoutMs, Consumer<String> logger) {
         this.workerJar = pluginDataFolder.resolve("worker").resolve("AuthBridgeWorker.jar");
         this.controlPort = controlPort;
-        this.upstreamHost = upstreamHost;
-        this.upstreamPort = upstreamPort;
+        this.upstreamEndpoints = upstreamEndpoints;
         this.upstreamTimeoutMs = upstreamTimeoutMs;
         this.logger = logger;
     }
@@ -67,8 +66,7 @@ final class WorkerSupervisor {
             command.add("-jar");
             command.add(workerJar.toAbsolutePath().toString());
             command.add(String.valueOf(controlPort));
-            command.add(upstreamHost);
-            command.add(String.valueOf(upstreamPort));
+            command.add(upstreamEndpoints);
             command.add(String.valueOf(upstreamTimeoutMs));
             process = new ProcessBuilder(command)
                     .redirectErrorStream(true)

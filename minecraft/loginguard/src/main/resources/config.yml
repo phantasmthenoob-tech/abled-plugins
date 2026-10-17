@@ -16,6 +16,14 @@ debug: false
 #      NO_ACCOUNT (login) -> denied with a hint to /register
 #      UPSTREAM_TIMEOUT / UPSTREAM_DOWN -> DENIED (fails closed)
 #
+# Endpoint notes:
+#   - A public IP that belongs to this machine is often refused from inside the
+#     container/host (NAT hairpin) while the same service answers on 127.0.0.1. When the
+#     configured endpoint refuses the connection the worker retries 127.0.0.1:<port>, unless
+#     that port is the port this server itself listens on (then the verifier would be talking
+#     to the server it protects).
+#   - On enable the plugin probes the endpoint once and logs reachable / NOT reachable, so a
+#     bad host or port is visible immediately instead of on the first player's /login.
 bridge:
   enabled: false
   control-port: 4519          # loopback port between plugin and worker; do not expose

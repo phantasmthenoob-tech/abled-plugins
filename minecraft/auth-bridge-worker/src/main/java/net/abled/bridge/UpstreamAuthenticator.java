@@ -48,15 +48,23 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class UpstreamAuthenticator {
 
-    private final String host;
-    private final int port;
+    /** One upstream endpoint the worker may verify against, in preference order. */
+    record Endpoint(String host, int port) {
+        @Override
+        public String toString() {
+            return host + ":" + port;
+        }
+    }
+
+    private final List<Endpoint> endpoints;
     private final long timeoutMs;
     /** Every observed upstream line/screen is printed here; the plugin prefixes it. */
     private final java.util.function.Consumer<String> observer;
+    /** Last endpoint that accepted a connection; tried first on the next attempt. */
+    private volatile Endpoint preferred;
 
-    UpstreamAuthenticator(String host, int port, long timeoutMs, java.util.function.Consumer<String> observer) {
-        this.host = host;
-        this.port = port;
+    UpstreamAuthenticator(List<Endpoint> endpoints, long timeoutMs, java.util.function.Consumer<String> observer) {
+        this.endpoints = List.copyOf(endpoints);
         this.timeoutMs = timeoutMs;
         this.observer = observer;
     }
@@ -79,13 +87,63 @@ final class UpstreamAuthenticator {
     record Outcome(Verdict verdict, String detail) {
     }
 
-    /** Runs one attempt end to end; caller wipes the request afterwards. */
+    /** One endpoint's outcome plus whether the endpoint was even reachable. */
+    private record Attempt(Outcome outcome, boolean connectFailed) {
+    }
+
+    /**
+     * Runs one attempt end to end; caller wipes the request afterwards.
+     *
+     * <p>Endpoints are tried in preference order. A transport-level failure (refused, unknown
+     * host, no route, connect timeout) moves on to the next endpoint; anything the upstream
+     * actually answered - even a kick - is a real verdict and is never retried. This is what
+     * makes a server reachable at {@code 127.0.0.1} but not at its own public IP work without
+     * operator intervention.
+     */
     Outcome verify(Request request) {
+        List<Endpoint> order = new ArrayList<>(endpoints.size() + 1);
+        Endpoint first = preferred;
+        if (first != null) {
+            order.add(first);
+        }
+        for (Endpoint endpoint : endpoints) {
+            if (!endpoint.equals(first)) {
+                order.add(endpoint);
+            }
+        }
+        Attempt last = null;
+        for (int i = 0; i < order.size(); i++) {
+            Endpoint endpoint = order.get(i);
+            last = verifyAt(endpoint, request);
+            if (!last.connectFailed()) {
+                preferred = endpoint;
+                return last.outcome();
+            }
+            if (endpoint.equals(preferred)) {
+                preferred = null;
+            }
+            if (i < order.size() - 1) {
+                observer.accept("[upstream] " + endpoint + " did not accept the connection;"
+                        + " trying " + order.get(i + 1));
+            }
+        }
+        return last == null
+                ? new Outcome(Verdict.UPSTREAM_DOWN, "UPSTREAM_DOWN, no upstream endpoint configured")
+                : last.outcome();
+    }
+
+    /** One attempt against one endpoint. */
+    private Attempt verifyAt(Endpoint endpoint, Request request) {
         AtomicReference<Verdict> outcome = new AtomicReference<>(Verdict.UPSTREAM_TIMEOUT);
         AtomicReference<String> evidence = new AtomicReference<>(null);
         java.util.concurrent.atomic.AtomicInteger observed = new java.util.concurrent.atomic.AtomicInteger(0);
         CompletableFuture<Verdict> done = new CompletableFuture<>();
         AtomicBoolean responded = new AtomicBoolean(false);
+        // Set only when the TCP connection (or name resolution) failed; the caller uses it to
+        // decide whether another endpoint is worth trying.
+        AtomicBoolean connectFailed = new AtomicBoolean(false);
+        AtomicReference<String> transportReason = new AtomicReference<>("failed");
+        AtomicBoolean connected = new AtomicBoolean(false);
         MinecraftProtocol protocol = new MinecraftProtocol(request.username());
         final AtomicReference<Session> sessionRef = new AtomicReference<>(null);
         // Every completion path (verdict or failure) must drop the ghost client at once: a
@@ -93,20 +151,23 @@ final class UpstreamAuthenticator {
         // "logged in from another location".
         Runnable leaveNow = () -> {
             Session live = sessionRef.getAndSet(null);
-            if (live != null) {
+            // Only a session that actually reached the upstream has to be walked out; a refused
+            // connection has nothing to disconnect and would only add noise to the log.
+            if (live != null && connected.get()) {
                 live.disconnect(net.kyori.adventure.text.Component.text("LoginGuard bridge: verified"), null);
                 observer.accept("[upstream] ghost client left after the verdict");
             }
         };
         try {
             Session session = ClientNetworkSessionFactory.factory()
-                    .setAddress(host, port)
+                    .setAddress(endpoint.host(), endpoint.port())
                     .setProtocol(protocol)
                     .create();
             sessionRef.set(session);
             session.addListener(new SessionAdapter() {
                 @Override
                 public void connected(ConnectedEvent event) {
+                    connected.set(true);
                 }
 
                 @Override
@@ -186,8 +247,13 @@ final class UpstreamAuthenticator {
 
                 @Override
                 public void disconnected(DisconnectedEvent event) {
-                    String why = event == null || event.getCause() == null ? "" : String.valueOf(event.getCause());
+                    Throwable cause = event == null ? null : event.getCause();
+                    String why = cause == null ? "" : String.valueOf(cause);
                     observer.accept("[upstream] session ended " + safe(why));
+                    if (isTransportFailure(cause)) {
+                        connectFailed.set(true);
+                        transportReason.set(shortReason(cause));
+                    }
                     Classifier.onDisconnect("", outcome, done);
                 }
             });
@@ -200,19 +266,58 @@ final class UpstreamAuthenticator {
             outcome.set(Verdict.UPSTREAM_TIMEOUT);
         } catch (Exception e) {
             observer.accept("[upstream] connection failed: " + e.getClass().getSimpleName());
+            if (isTransportFailure(e)) {
+                connectFailed.set(true);
+                transportReason.set(shortReason(e));
+            }
             outcome.set(Verdict.UPSTREAM_DOWN);
         }
         Verdict verdict = outcome.get() == null ? Verdict.UPSTREAM_DOWN : outcome.get();
         String detail;
-        if (evidence.get() != null) {
+        if (connectFailed.get()) {
+            // The endpoint was never reached. Naming it here is the difference between an
+            // operator seeing "UPSTREAM_DOWN" and knowing what to fix.
+            detail = verdict.name() + ", " + endpoint + " " + transportReason.get();
+        } else if (evidence.get() != null) {
             detail = verdict.name() + ", last observed: " + safe(evidence.get());
         } else if (verdict == Verdict.UPSTREAM_TIMEOUT) {
             detail = verdict.name() + ", no dialog or chat was ever received from the upstream";
         } else {
             detail = verdict.name();
         }
-        return new Outcome(verdict, detail);
-    }    /** Readable one-liner describing a dialog NBT: type, submit action and input keys. */
+        return new Attempt(new Outcome(verdict, detail), connectFailed.get());
+    }    /** True when the cause chain says the endpoint never accepted the connection at all. */
+    private static boolean isTransportFailure(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            if (t instanceof java.net.ConnectException
+                    || t instanceof java.net.UnknownHostException
+                    || t instanceof java.net.NoRouteToHostException
+                    || t instanceof java.net.SocketTimeoutException
+                    || t instanceof java.net.PortUnreachableException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /** Root cause as one short line: exception type plus its message, capped. */
+    private static String shortReason(Throwable cause) {
+        Throwable root = cause;
+        while (root != null && root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (root == null) {
+            return "failed";
+        }
+        String message = root.getMessage();
+        return root.getClass().getSimpleName()
+                + (message == null || message.isBlank() ? "" : " (" + safe(message, 160) + ")");
+    }
+
+    /** Readable one-liner describing a dialog NBT: type, submit action and input keys. */
     private static final class DialogSummary {
         static String of(NbtMap dialog) {
             StringBuilder s = new StringBuilder("(");

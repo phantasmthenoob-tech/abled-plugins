@@ -4,7 +4,14 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * LoginGuard: first join requires /register, later joins require /login. Unauthenticated players
@@ -22,6 +29,10 @@ import java.nio.file.Path;
  *   upstream-port: 25565
  *   upstream-timeout-ms: 15000
  * </pre>
+ *
+ * <p>When the configured endpoint refuses the connection, the worker also tries
+ * {@code 127.0.0.1:<upstream-port>} (skipped when that port is this server's own port), which is
+ * what makes a server reachable on the host but not through its public IP work unchanged.
  *
  * <p>With {@code bridge.enabled: false} behaviour falls back to the local logins folder exactly
  * as before. Fail-closed: any bridge outage denies instead of letting people in.
@@ -72,16 +83,19 @@ public final class LoginGuardPlugin extends JavaPlugin {
         manager = new LoginManager(this, store);
 
         if (bridgeEnabled) {
-            supervisor = new WorkerSupervisor(getDataFolder().toPath(), controlPort, upstreamHost,
-                    upstreamPort, upstreamTimeout, msg -> getLogger().info(msg));
+            List<String> endpoints = upstreamEndpoints(upstreamHost, upstreamPort);
+            supervisor = new WorkerSupervisor(getDataFolder().toPath(), controlPort,
+                    String.join(",", endpoints), upstreamTimeout, msg -> getLogger().info(msg));
             if (!supervisor.ensureRunning()) {
                 getLogger().severe("bridge enabled but the worker could not start; failing closed");
             } else {
-                getLogger().info("worker process spawned (upstream " + upstreamHost + ":" + upstreamPort + ")");
+                getLogger().info("worker process spawned (upstream " + String.join(",", endpoints) + ")");
             }
             manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
                     msg -> getLogger().info(msg), supervisor::revive), store);
-            getLogger().info("bridge mode: verifying against " + upstreamHost + ":" + upstreamPort);
+            getLogger().info("bridge mode: verifying against " + String.join(",", endpoints));
+            // Prove the endpoint answers now, not on the first player's /login.
+            preflightUpstream(endpoints);
         } else {
             getLogger().info("bridge mode: DISABLED (set bridge.enabled: true in config.yml) ");
         }
@@ -113,6 +127,85 @@ public final class LoginGuardPlugin extends JavaPlugin {
     public void onDisable() {
         if (supervisor != null) {
             supervisor.shutdown();
+        }
+    }
+
+    /**
+     * Primary endpoint plus, when it cannot be this server itself, the loopback twin of the same
+     * port. A machine's own public IP is commonly refused from inside its container/host (NAT
+     * hairpin) while the same service answers on 127.0.0.1 - and the worker can only report the
+     * refusal, never see the difference.
+     *
+     * <p>The loopback twin is skipped when the configured port is the port this server itself
+     * listens on: the verifier would then be pointed at the server it protects, which locks the
+     * ghost client and re-enters the bridge against itself instead of authenticating anywhere.
+     */
+    private List<String> upstreamEndpoints(String upstreamHost, int upstreamPort) {
+        List<String> endpoints = new ArrayList<>();
+        endpoints.add(upstreamHost + ":" + upstreamPort);
+        boolean loopbackHost = isLoopbackHost(upstreamHost);
+        if (!loopbackHost && upstreamPort != getServer().getPort()) {
+            endpoints.add("127.0.0.1:" + upstreamPort);
+        } else if (!loopbackHost) {
+            getLogger().warning("upstream " + upstreamHost + ":" + upstreamPort
+                    + " uses the very port this server listens on; the loopback fallback is disabled because"
+                    + " it would point the verifier at this server itself. If the auth server runs on this"
+                    + " machine, set bridge.upstream-port to the port it really listens on.");
+        }
+        return endpoints;
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        return host.equalsIgnoreCase("localhost")
+                || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]");
+    }
+
+    /**
+     * One startup probe, off the main thread: resolve and connect to each endpoint in order and
+     * log the first that answers. Without this the only evidence of a bad upstream is a player's
+     * failed /login, hours later.
+     */
+    private void preflightUpstream(List<String> endpoints) {
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            for (String endpoint : endpoints) {
+                int colon = endpoint.lastIndexOf(':');
+                String host = endpoint.substring(0, colon);
+                int port = Integer.parseInt(endpoint.substring(colon + 1));
+                try {
+                    InetAddress address = InetAddress.getByName(host);
+                    long started = System.nanoTime();
+                    try (Socket probe = new Socket()) {
+                        probe.connect(new InetSocketAddress(address, port), 3000);
+                    }
+                    long ms = (System.nanoTime() - started) / 1_000_000;
+                    getLogger().info("upstream " + endpoint + " reachable (" + ms + " ms, "
+                            + address.getHostAddress() + ")");
+                    if (isLocalAddress(address)) {
+                        getLogger().warning("upstream " + endpoint + " is an address of this machine;"
+                                + " the auth server must be listening on that port here for the bridge to work");
+                    }
+                    return;
+                } catch (IOException e) {
+                    getLogger().warning("upstream " + endpoint + " is NOT reachable: " + e.getClass().getSimpleName()
+                            + (e.getMessage() == null ? "" : " (" + e.getMessage() + ")")
+                            + " - bridge logins are denied until it answers (fail-closed)");
+                }
+            }
+            getLogger().warning("no bridge upstream endpoint answered; every /login and /register will be denied");
+        });
+    }
+
+    /** True when the address belongs to this machine (any interface), used for the preflight hint. */
+    private static boolean isLocalAddress(InetAddress address) {
+        if (address.isLoopbackAddress() || address.isAnyLocalAddress()) {
+            return true;
+        }
+        try {
+            return Collections.list(NetworkInterface.getNetworkInterfaces()).stream()
+                    .flatMap(nic -> Collections.list(nic.getInetAddresses()).stream())
+                    .anyMatch(address::equals);
+        } catch (IOException e) {
+            return false;
         }
     }
 

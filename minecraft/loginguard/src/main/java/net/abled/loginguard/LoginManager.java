@@ -140,10 +140,10 @@ final class LoginManager {
             if (verdict == Verdict.UPSTREAM_DOWN) {
                 if (!upstreamHintLogged) {
                     upstreamHintLogged = true;
-                    log.accept("upstream refused the worker's connection - if the upstream server runs on"
-                            + " this same machine, set bridge.upstream-host to 127.0.0.1 (its public IP"
-                            + " is usually unreachable from inside the container); otherwise check that"
-                            + " the host and port are reachable from this host");
+                    log.accept("the worker could not reach the upstream - if that server runs on this"
+                            + " machine, set bridge.upstream-host to 127.0.0.1 and bridge.upstream-port to"
+                            + " the port it actually listens on (a box's own public IP is usually refused"
+                            + " from inside the box); otherwise check host, port and firewall from this host");
                 }
             } else {
                 upstreamHintLogged = false;
