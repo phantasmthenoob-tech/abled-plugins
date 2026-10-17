@@ -38,6 +38,10 @@ public final class LoginGuardPlugin extends JavaPlugin {
         // Write the bundled config.yml on first run: without this, a missing file leaves every
         // getConfig() read at code defaults (bridge permanently off) and there is no file to edit.
         saveDefaultConfig();
+        // Stamped first: a stale jar left in plugins/ is indistinguishable from a fixed one in
+        // the console, and the v1.1.0 dialog build crashed with an NPE in AuthDialogs for weeks.
+        String version = getPluginMeta().getVersion();
+        getLogger().info("LoginGuard v" + version + " enabling");
 
         Path loginsRoot = getDataFolder().toPath().resolve("logins");
         boolean bridgeEnabledEarly = getConfig().getBoolean("bridge.enabled", false);
@@ -84,9 +88,9 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
 
-        // Chat-prompt nagging: every 5 seconds, any still-locked player gets the reminder.
-        // Chat nagging: every 5 seconds, purely from memory - the repeating loop must not do
-        // per-player disk reads (LoginStore record checks are file reads on the main thread).
+        // Nagging: every 5 seconds, any still-locked player gets the reminder, purely from
+        // memory - the repeating loop must not do per-player disk reads (LoginStore record
+        // checks are file reads on the main thread).
         getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(player -> {
             if (!manager.isAuthenticated(player.getUniqueId())) {
                 player.sendMessage(manager.promptFor(player.getUniqueId()));
@@ -102,7 +106,7 @@ public final class LoginGuardPlugin extends JavaPlugin {
         if (login != null) {
             login.setExecutor(new LoginCommand(manager, LoginCommand.Mode.LOGIN));
         }
-        getLogger().info("LoginGuard ready, logins folder: " + loginsFolder);
+        getLogger().info("LoginGuard v" + version + " ready, logins folder: " + loginsFolder);
     }
 
     @Override

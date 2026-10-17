@@ -8,11 +8,6 @@ java {
     }
 }
 
-repositories {
-    mavenCentral()
-    maven("https://repo.papermc.io/repository/maven-public/") { name = "papermc" }
-}
-
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.2.build.129-stable")
     testImplementation(platform("org.junit:junit-bom:5.11.4"))

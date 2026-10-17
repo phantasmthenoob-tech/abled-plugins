@@ -29,6 +29,8 @@ final class LoginManager {
     /** Who has a saved record: filled at join (one read), updated on register/login success. */
     private final Set<UUID> knownRecords = ConcurrentHashMap.newKeySet();
     private Consumer<String> log;
+    /** One actionable hint per outage, not one per failed /login attempt. */
+    private volatile boolean upstreamHintLogged;
 
     /** Optional bridge; null in local-only mode. */
     private BridgeClient bridge;
@@ -135,6 +137,17 @@ final class LoginManager {
                     ? bridge.verify(name, password, LoginGuardPlugin.Mode.REGISTER)
                     : bridge.verify(name, password, LoginGuardPlugin.Mode.LOGIN);
             log.accept("bridge verdict for " + action.toString().toLowerCase() + " of " + name + ": " + verdict);
+            if (verdict == Verdict.UPSTREAM_DOWN) {
+                if (!upstreamHintLogged) {
+                    upstreamHintLogged = true;
+                    log.accept("upstream refused the worker's connection - if the upstream server runs on"
+                            + " this same machine, set bridge.upstream-host to 127.0.0.1 (its public IP"
+                            + " is usually unreachable from inside the container); otherwise check that"
+                            + " the host and port are reachable from this host");
+                }
+            } else {
+                upstreamHintLogged = false;
+            }
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!player.isOnline() || !player.getUniqueId().equals(id)) {
                     return;

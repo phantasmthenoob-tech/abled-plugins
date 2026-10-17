@@ -7,6 +7,8 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -44,17 +46,31 @@ final class WorkerSupervisor {
             return ready;
         }
         ready = false;
-        if (!Files.isRegularFile(workerJar) && !extractBundledWorker()) {
+        // Always re-extract the bundled worker. The old extract-only-if-missing rule left the
+        // first build's worker in plugins/LoginGuard/worker forever, so updating the plugin
+        // silently kept running the stale worker next to the new plugin.
+        extractBundledWorker();
+        if (!Files.isRegularFile(workerJar)) {
             logger.accept("worker jar missing at " + workerJar + " and bundled copy unavailable"
                     + " - verification will fail closed");
             return false;
         }
         try {
             String java = System.getProperty("java.home") + "/bin/java";
-            process = new ProcessBuilder(
-                    java, "-jar", workerJar.toAbsolutePath().toString(),
-                    String.valueOf(controlPort), upstreamHost, String.valueOf(upstreamPort),
-                    String.valueOf(upstreamTimeoutMs))
+            List<String> command = new ArrayList<>();
+            command.add(java);
+            // JDK 24+ warns on every start that netty loads a native library from an unnamed
+            // module; the flag exists only from 24 on, so older JVMs must not receive it.
+            if (Runtime.version().feature() >= 24) {
+                command.add("--enable-native-access=ALL-UNNAMED");
+            }
+            command.add("-jar");
+            command.add(workerJar.toAbsolutePath().toString());
+            command.add(String.valueOf(controlPort));
+            command.add(upstreamHost);
+            command.add(String.valueOf(upstreamPort));
+            command.add(String.valueOf(upstreamTimeoutMs));
+            process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
                     .start();
             // The stdout reader must exist before the READY wait: it is what sets ready.
@@ -107,9 +123,9 @@ final class WorkerSupervisor {
     }
 
     /**
-     * Copies the worker jar bundled inside the plugin jar to the data folder. Returns false
-     * without side effects when the resource is absent (foreign-built jar, shaded fat jar,
-     * or extraction I/O failure).
+     * Copies the worker jar bundled inside the plugin jar to the data folder, replacing any
+     * existing copy. Returns false without side effects when the resource is absent
+     * (foreign-built jar, shaded fat jar, or extraction I/O failure).
      */
     private boolean extractBundledWorker() {
         try (InputStream in = WorkerSupervisor.class.getResourceAsStream("/AuthBridgeWorker.jar")) {

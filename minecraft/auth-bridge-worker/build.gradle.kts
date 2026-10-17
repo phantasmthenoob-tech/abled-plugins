@@ -11,11 +11,6 @@ java {
     }
 }
 
-repositories {
-    mavenCentral()
-    maven("https://repo.opencollab.dev/main/") { name = "opencollab" }
-}
-
 dependencies {
     // Headless Minecraft client: packet-level, offline-mode capable, text inputs and
     // dialog (screen) responses supported. Runs as a supervised child process.
@@ -27,6 +22,9 @@ dependencies {
     implementation("org.geysermc.mcprotocollib:text-serializer-nbt:0.2.0")
     // Render system chat / kick reasons to plain text for classification.
     implementation("net.kyori:adventure-text-serializer-plain:5.2.0")
+    // Netty pulls in slf4j-api; without a provider it prints two "No SLF4J providers"
+    // warnings into the server console on every worker start. The worker logs via stdout.
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.17")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -50,6 +48,9 @@ tasks.test {
 // spawn it with a plain `java -jar` and no classpath assembly.
 tasks.named<Jar>("jar") {
     archiveBaseName.set("AuthBridgeWorker")
+    // No version suffix: loginguard's processResources consumes this exact file, and a
+    // versioned name left the previous build's AuthBridgeWorker.jar to be bundled silently.
+    archiveVersion.set("")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "net.abled.bridge.WorkerMain"

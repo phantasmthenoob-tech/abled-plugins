@@ -18,6 +18,10 @@ dependencyResolutionManagement {
         maven("https://repo.papermc.io/repository/maven-public/") {
             name = "papermc"
         }
+        // MCProtocolLib snapshots for the auth-bridge worker.
+        maven("https://repo.opencollab.dev/main/") {
+            name = "opencollab"
+        }
     }
 }
 
