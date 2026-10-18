@@ -22,8 +22,15 @@ debug: false
 #     configured endpoint refuses the connection the worker retries 127.0.0.1:<port>, unless
 #     that port is the port this server itself listens on (then the verifier would be talking
 #     to the server it protects).
-#   - On enable the plugin probes the endpoint once and logs reachable / NOT reachable, so a
+#   - On enable the plugin probes the endpoint(s) once and logs reachable / NOT reachable, so a
 #     bad host or port is visible immediately instead of on the first player's /login.
+#   - A published port is not the port a server listens on inside a container, and a container
+#     cannot dial its own published address. When both the public address and the loopback twin
+#     are refused, the upstream's real internal address is the one to configure - either as
+#     upstream-host/upstream-port, or in upstream-endpoints below.
+#   - /loginguard probe                tests the configured endpoints, in order
+#     /loginguard probe <host:port>    tests one candidate without editing the config
+#     Both print what answered, what resolved, and the TCP ports this machine listens on.
 #
 # Where the bridge connects from - this is the address the upstream records for the login:
 #
@@ -50,6 +57,14 @@ bridge:
   control-port: 4519          # loopback port between plugin and worker; do not expose
   upstream-host: 127.0.0.1
   upstream-port: 25565
+  # Exact endpoints to try, in order, instead of upstream-host/upstream-port. Use this when the
+  # upstream is another container or answers on a different address than the one players use.
+  # The loopback twin of the first entry is still appended when it is not loopback already.
+  # Example:
+  #   upstream-endpoints:
+  #     - 172.18.0.5:25565
+  #     - play.example.com:50252
+  upstream-endpoints: []
   upstream-timeout-ms: 15000
   bind-address: ''            # local source address; empty = the OS chooses
   proxy: ''                   # e.g. socks5://127.0.0.1:1080; empty = direct

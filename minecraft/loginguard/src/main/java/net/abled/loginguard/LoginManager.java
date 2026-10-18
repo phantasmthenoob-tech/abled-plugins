@@ -140,10 +140,10 @@ final class LoginManager {
             if (verdict == Verdict.UPSTREAM_DOWN) {
                 if (!upstreamHintLogged) {
                     upstreamHintLogged = true;
-                    log.accept("the worker could not reach the upstream - if that server runs on this"
-                            + " machine, set bridge.upstream-host to 127.0.0.1 and bridge.upstream-port to"
-                            + " the port it actually listens on (a box's own public IP is usually refused"
-                            + " from inside the box); otherwise check host, port and firewall from this host");
+                    log.accept("the worker could not reach the upstream - run /loginguard probe to test"
+                            + " the configured endpoints and see which ports this machine listens on; a box's"
+                            + " own published port is usually refused from inside it, so a container needs the"
+                            + " upstream's internal address in bridge.upstream-endpoints");
                 }
             } else {
                 upstreamHintLogged = false;

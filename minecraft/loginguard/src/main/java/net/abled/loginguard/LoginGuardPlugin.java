@@ -4,13 +4,8 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.Socket;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -27,6 +22,7 @@ import java.util.List;
  *   control-port: 4519        # loopback port between plugin and worker
  *   upstream-host: the.host
  *   upstream-port: 25565
+ *   upstream-endpoints: []    # optional host:port list, tried in order, instead of host/port
  *   upstream-timeout-ms: 15000
  *   bind-address: ""          # local source address, when this host owns several
  *   proxy: ""                 # socks5://host:port, so the upstream sees the proxy's address
@@ -37,9 +33,12 @@ import java.util.List;
  * back to the address that sent it - so looking like a different address means connecting from
  * one: either another address this host owns, or a proxy/VPN.</p>
  *
- * <p>When the configured endpoint refuses the connection, the worker also tries
- * {@code 127.0.0.1:<upstream-port>} (skipped when that port is this server's own port), which is
- * what makes a server reachable on the host but not through its public IP work unchanged.
+ * <p>When the endpoint refuses the connection, the worker also tries the loopback twin
+ * {@code 127.0.0.1:<port>} of the first endpoint (skipped when that port is this server's own
+ * port), which makes a server reachable on the host but not through its own public IP work
+ * unchanged. {@code bridge.upstream-endpoints} lists the exact addresses instead, which is what a
+ * container needs: it cannot dial its own published port, and only the upstream's internal
+ * address answers. {@code /loginguard probe [host:port]} tests candidates from the console.
  *
  * <p>With {@code bridge.enabled: false} behaviour falls back to the local logins folder exactly
  * as before. Fail-closed: any bridge outage denies instead of letting people in.
@@ -88,11 +87,14 @@ public final class LoginGuardPlugin extends JavaPlugin {
         long upstreamTimeout = getConfig().getLong("bridge.upstream-timeout-ms", 15000);
         String bindAddress = getConfig().getString("bridge.bind-address", "");
         String proxy = getConfig().getString("bridge.proxy", "");
+        List<String> explicitEndpoints = getConfig().getStringList("bridge.upstream-endpoints");
 
         manager = new LoginManager(this, store);
+        List<String> bridgeEndpoints = List.of();
 
         if (bridgeEnabled) {
-            List<String> endpoints = upstreamEndpoints(upstreamHost, upstreamPort);
+            List<String> endpoints = upstreamEndpoints(upstreamHost, upstreamPort, explicitEndpoints);
+            bridgeEndpoints = endpoints;
             supervisor = new WorkerSupervisor(getDataFolder().toPath(), controlPort,
                     String.join(",", endpoints), upstreamTimeout, bindAddress, proxy,
                     msg -> getLogger().info(msg));
@@ -119,6 +121,15 @@ public final class LoginGuardPlugin extends JavaPlugin {
             preflightUpstream(endpoints, bindAddress, proxy);
         } else {
             getLogger().info("bridge mode: DISABLED (set bridge.enabled: true in config.yml) ");
+        }
+
+        // Registered even with the bridge off: the operators who need it most are the ones whose
+        // endpoint does not answer yet, and testing a candidate must not require a restart.
+        PluginCommand probe = getCommand("loginguard");
+        if (probe != null) {
+            List<String> probed = bridgeEndpoints;
+            probe.setExecutor(new ProbeCommand(this, () -> probed, bindAddress,
+                    proxy != null && !proxy.isBlank()));
         }
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
@@ -152,26 +163,56 @@ public final class LoginGuardPlugin extends JavaPlugin {
     }
 
     /**
-     * Primary endpoint plus, when it cannot be this server itself, the loopback twin of the same
-     * port. A machine's own public IP is commonly refused from inside its container/host (NAT
+     * The endpoints the worker dials, in order: {@code bridge.upstream-endpoints} when it names
+     * any, otherwise {@code upstream-host:upstream-port}, plus the loopback twin of the first
+     * entry. A machine's own public IP is commonly refused from inside its container/host (NAT
      * hairpin) while the same service answers on 127.0.0.1 - and the worker can only report the
      * refusal, never see the difference.
      *
-     * <p>The loopback twin is skipped when the configured port is the port this server itself
-     * listens on: the verifier would then be pointed at the server it protects, which locks the
-     * ghost client and re-enters the bridge against itself instead of authenticating anywhere.
+     * <p>The loopback twin is skipped when the first endpoint is already loopback or uses the port
+     * this server itself listens on: the verifier would then be pointed at the server it protects,
+     * which locks the ghost client and re-enters the bridge against itself instead of
+     * authenticating anywhere.
      */
-    private List<String> upstreamEndpoints(String upstreamHost, int upstreamPort) {
+    private List<String> upstreamEndpoints(String upstreamHost, int upstreamPort, List<String> explicit) {
         List<String> endpoints = new ArrayList<>();
-        endpoints.add(upstreamHost + ":" + upstreamPort);
-        boolean loopbackHost = isLoopbackHost(upstreamHost);
-        if (!loopbackHost && upstreamPort != getServer().getPort()) {
-            endpoints.add("127.0.0.1:" + upstreamPort);
-        } else if (!loopbackHost) {
-            getLogger().warning("upstream " + upstreamHost + ":" + upstreamPort
-                    + " uses the very port this server listens on; the loopback fallback is disabled because"
-                    + " it would point the verifier at this server itself. If the auth server runs on this"
-                    + " machine, set bridge.upstream-port to the port it really listens on.");
+        for (String entry : explicit) {
+            String[] parts = EndpointProbe.parse(entry);
+            if (parts == null) {
+                getLogger().warning("ignoring bridge.upstream-endpoints entry \"" + entry
+                        + "\": expected host:port");
+                continue;
+            }
+            String endpoint = parts[0] + ":" + parts[1];
+            if (!endpoints.contains(endpoint)) {
+                endpoints.add(endpoint);
+            }
+        }
+        if (!explicit.isEmpty() && endpoints.isEmpty()) {
+            getLogger().severe("bridge.upstream-endpoints has no usable entry; falling back to "
+                    + upstreamHost + ":" + upstreamPort);
+        }
+        if (endpoints.isEmpty()) {
+            endpoints.add(upstreamHost + ":" + upstreamPort);
+        }
+        // Loopback twin of the first endpoint: a machine's own public IP is commonly refused from
+        // inside its container/host (NAT hairpin) while the same service answers on 127.0.0.1, and
+        // the worker can only see the refusal. Skipped for this server's own port, where the
+        // verifier would be talking to the server it protects.
+        String[] first = EndpointProbe.parse(endpoints.get(0));
+        if (first != null) {
+            int port = Integer.parseInt(first[1]);
+            String twin = "127.0.0.1:" + port;
+            if (!isLoopbackHost(first[0]) && port != getServer().getPort()) {
+                if (!endpoints.contains(twin)) {
+                    endpoints.add(twin);
+                }
+            } else if (!isLoopbackHost(first[0])) {
+                getLogger().warning("upstream " + endpoints.get(0)
+                        + " uses the very port this server listens on; the loopback fallback is disabled because"
+                        + " it would point the verifier at this server itself. If the auth server runs on this"
+                        + " machine, set bridge.upstream-port to the port it really listens on.");
+            }
         }
         return endpoints;
     }
@@ -197,49 +238,32 @@ public final class LoginGuardPlugin extends JavaPlugin {
         String bind = bindAddress == null || bindAddress.isBlank() ? null : bindAddress.trim();
         getServer().getScheduler().runTaskAsynchronously(this, () -> {
             for (String endpoint : endpoints) {
-                int colon = endpoint.lastIndexOf(':');
-                String host = endpoint.substring(0, colon);
-                int port = Integer.parseInt(endpoint.substring(colon + 1));
-                try {
-                    InetAddress address = InetAddress.getByName(host);
-                    long started = System.nanoTime();
-                    try (Socket probe = new Socket()) {
-                        if (bind != null) {
-                            probe.bind(new InetSocketAddress(bind, 0));
-                        }
-                        probe.connect(new InetSocketAddress(address, port), 3000);
-                    }
-                    long ms = (System.nanoTime() - started) / 1_000_000;
-                    getLogger().info("upstream " + endpoint + " reachable (" + ms + " ms, "
-                            + address.getHostAddress() + ")"
-                            + (bind == null ? "" : " from " + bind));
-                    if (isLocalAddress(address)) {
+                EndpointProbe.Result result = EndpointProbe.probe(endpoint, bind);
+                if (!result.reachable()) {
+                    getLogger().warning("upstream " + result.describe()
+                            + " - bridge logins are denied until it answers (fail-closed)");
+                    continue;
+                }
+                getLogger().info("upstream " + result.describe()
+                        + (bind == null ? "" : " from " + bind));
+                if (EndpointProbe.isLocalAddress(result.address())) {
+                    if (result.port() == getServer().getPort()) {
+                        getLogger().severe("upstream " + endpoint + " is this server itself - the worker"
+                                + " cannot log in as a player who is already connected here. LoginGuard must"
+                                + " point at the separate auth server, not at the server it protects.");
+                    } else {
                         getLogger().warning("upstream " + endpoint + " is an address of this machine;"
                                 + " the auth server must be listening on that port here for the bridge to work");
                     }
-                    return;
-                } catch (IOException e) {
-                    getLogger().warning("upstream " + endpoint + " is NOT reachable: " + e.getClass().getSimpleName()
-                            + (e.getMessage() == null ? "" : " (" + e.getMessage() + ")")
-                            + " - bridge logins are denied until it answers (fail-closed)");
                 }
+                return;
             }
             getLogger().warning("no bridge upstream endpoint answered; every /login and /register will be denied");
+            getLogger().warning("TCP ports this machine listens on: " + EndpointProbe.describeListeningPorts());
+            getLogger().warning("a published port (the one players connect to) is usually not the port the"
+                    + " server listens on inside its container; list the upstream's real internal address"
+                    + " first in bridge.upstream-endpoints, or test one with /loginguard probe <host:port>");
         });
-    }
-
-    /** True when the address belongs to this machine (any interface), used for the preflight hint. */
-    private static boolean isLocalAddress(InetAddress address) {
-        if (address.isLoopbackAddress() || address.isAnyLocalAddress()) {
-            return true;
-        }
-        try {
-            return Collections.list(NetworkInterface.getNetworkInterfaces()).stream()
-                    .flatMap(nic -> Collections.list(nic.getInetAddresses()).stream())
-                    .anyMatch(address::equals);
-        } catch (IOException e) {
-            return false;
-        }
     }
 
     /** A proxy spec with any credentials removed, so the console never prints a password. */
