@@ -48,6 +48,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class UpstreamAuthenticator {
 
+    static {
+        // An upstream that is not on 26.3 yet sends the older login-success layout; without this
+        // the session dies on a decoder error before the auth prompt and reads as UPSTREAM_DOWN.
+        LoginSuccessCompat.install();
+    }
+
     /** One upstream endpoint the worker may verify against, in preference order. */
     record Endpoint(String host, int port) {
         @Override
@@ -60,12 +66,16 @@ final class UpstreamAuthenticator {
     private final long timeoutMs;
     /** Every observed upstream line/screen is printed here; the plugin prefixes it. */
     private final java.util.function.Consumer<String> observer;
+    /** Local source address and/or proxy every attempt leaves through. */
+    private final ConnectRoute route;
     /** Last endpoint that accepted a connection; tried first on the next attempt. */
     private volatile Endpoint preferred;
 
-    UpstreamAuthenticator(List<Endpoint> endpoints, long timeoutMs, java.util.function.Consumer<String> observer) {
+    UpstreamAuthenticator(List<Endpoint> endpoints, long timeoutMs, ConnectRoute route,
+                          java.util.function.Consumer<String> observer) {
         this.endpoints = List.copyOf(endpoints);
         this.timeoutMs = timeoutMs;
+        this.route = route == null ? ConnectRoute.DIRECT : route;
         this.observer = observer;
     }
 
@@ -159,15 +169,22 @@ final class UpstreamAuthenticator {
             }
         };
         try {
-            Session session = ClientNetworkSessionFactory.factory()
-                    .setAddress(endpoint.host(), endpoint.port())
-                    .setProtocol(protocol)
+            Session session = route.apply(ClientNetworkSessionFactory.factory()
+                            .setAddress(endpoint.host(), endpoint.port())
+                            .setProtocol(protocol))
                     .create();
             sessionRef.set(session);
             session.addListener(new SessionAdapter() {
                 @Override
                 public void connected(ConnectedEvent event) {
                     connected.set(true);
+                    // The operator's answer to "where do these logins come from?": the endpoint
+                    // actually used and the local socket it left from. Behind a proxy this is the
+                    // address of this machine's connection to the proxy; the upstream sees the
+                    // proxy's own address, which only the proxy knows.
+                    Session live = sessionRef.get();
+                    observer.accept("[upstream] connected to " + endpoint + " from "
+                            + (live == null ? "?" : live.getLocalAddress()) + " (" + route.describe() + ")");
                 }
 
                 @Override
@@ -250,6 +267,10 @@ final class UpstreamAuthenticator {
                     Throwable cause = event == null ? null : event.getCause();
                     String why = cause == null ? "" : String.valueOf(cause);
                     observer.accept("[upstream] session ended " + safe(why));
+                    if (isPacketLayoutError(cause)) {
+                        observer.accept("[upstream] the upstream's packets do not match the"
+                                + " bundled 26.3 protocol; it is probably running a different version");
+                    }
                     if (isTransportFailure(cause)) {
                         connectFailed.set(true);
                         transportReason.set(shortReason(cause));
@@ -286,7 +307,26 @@ final class UpstreamAuthenticator {
             detail = verdict.name();
         }
         return new Attempt(new Outcome(verdict, detail), connectFailed.get());
-    }    /** True when the cause chain says the endpoint never accepted the connection at all. */
+    }
+
+    /** True when the session died because a packet could not be decoded or fully consumed. */
+    private static boolean isPacketLayoutError(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            if (t instanceof io.netty.handler.codec.DecoderException) {
+                return true;
+            }
+            if (t instanceof IllegalStateException && t.getMessage() != null
+                    && t.getMessage().contains("not fully read")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /** True when the cause chain says the endpoint never accepted the connection at all. */
     private static boolean isTransportFailure(Throwable cause) {
         for (Throwable t = cause; t != null; t = t.getCause()) {
             if (t instanceof java.net.ConnectException
@@ -607,7 +647,17 @@ final class UpstreamAuthenticator {
             // ServerboundChatCommandPacket carries the command without the leading slash;
             // the 26.3 API takes just the command string and timestamps/signs internally.
             session.send(new ServerboundChatCommandPacket(command.substring(1)));
-            observer.accept("[upstream] sent " + command);
+            // Never log the command itself: /login and /register carry the password, and the
+            // plugin forwards everything it prints to the server console.
+            observer.accept("[upstream] sent /" + verbOf(command) + " (credentials withheld)");
+        }
+
+        /** First token of a slash command, the only part that is safe to log. */
+        private static String verbOf(String command) {
+            String withoutSlash = command.startsWith("/") ? command.substring(1) : command;
+            int space = withoutSlash.indexOf(' ');
+            String verb = space < 0 ? withoutSlash : withoutSlash.substring(0, space);
+            return verb.isBlank() ? "command" : verb;
         }
     }
 

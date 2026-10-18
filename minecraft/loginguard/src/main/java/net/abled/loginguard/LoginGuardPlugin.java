@@ -28,7 +28,14 @@ import java.util.List;
  *   upstream-host: the.host
  *   upstream-port: 25565
  *   upstream-timeout-ms: 15000
+ *   bind-address: ""          # local source address, when this host owns several
+ *   proxy: ""                 # socks5://host:port, so the upstream sees the proxy's address
  * </pre>
+ *
+ * <p>{@code bind-address} and {@code proxy} decide what the upstream records as the client's
+ * address. A TCP source address cannot be forged on a direct connection - the answer has to come
+ * back to the address that sent it - so looking like a different address means connecting from
+ * one: either another address this host owns, or a proxy/VPN.</p>
  *
  * <p>When the configured endpoint refuses the connection, the worker also tries
  * {@code 127.0.0.1:<upstream-port>} (skipped when that port is this server's own port), which is
@@ -79,13 +86,16 @@ public final class LoginGuardPlugin extends JavaPlugin {
         String upstreamHost = getConfig().getString("bridge.upstream-host", "127.0.0.1");
         int upstreamPort = getConfig().getInt("bridge.upstream-port", 25565);
         long upstreamTimeout = getConfig().getLong("bridge.upstream-timeout-ms", 15000);
+        String bindAddress = getConfig().getString("bridge.bind-address", "");
+        String proxy = getConfig().getString("bridge.proxy", "");
 
         manager = new LoginManager(this, store);
 
         if (bridgeEnabled) {
             List<String> endpoints = upstreamEndpoints(upstreamHost, upstreamPort);
             supervisor = new WorkerSupervisor(getDataFolder().toPath(), controlPort,
-                    String.join(",", endpoints), upstreamTimeout, msg -> getLogger().info(msg));
+                    String.join(",", endpoints), upstreamTimeout, bindAddress, proxy,
+                    msg -> getLogger().info(msg));
             if (!supervisor.ensureRunning()) {
                 getLogger().severe("bridge enabled but the worker could not start; failing closed");
             } else {
@@ -94,8 +104,19 @@ public final class LoginGuardPlugin extends JavaPlugin {
             manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
                     msg -> getLogger().info(msg), supervisor::revive), store);
             getLogger().info("bridge mode: verifying against " + String.join(",", endpoints));
+            // Say what the upstream will see, without ever printing a proxy credential.
+            if (proxy != null && !proxy.isBlank()) {
+                getLogger().info("bridge connections leave through " + maskProxy(proxy)
+                        + " - the upstream sees that address, not this machine's");
+            } else if (bindAddress != null && !bindAddress.isBlank()) {
+                getLogger().info("bridge connections leave from " + bindAddress.trim()
+                        + " - the upstream sees that address");
+            } else {
+                getLogger().info("bridge connections leave from this machine's default address"
+                        + " (set bridge.proxy or bridge.bind-address to change what the upstream records)");
+            }
             // Prove the endpoint answers now, not on the first player's /login.
-            preflightUpstream(endpoints);
+            preflightUpstream(endpoints, bindAddress, proxy);
         } else {
             getLogger().info("bridge mode: DISABLED (set bridge.enabled: true in config.yml) ");
         }
@@ -165,7 +186,15 @@ public final class LoginGuardPlugin extends JavaPlugin {
      * log the first that answers. Without this the only evidence of a bad upstream is a player's
      * failed /login, hours later.
      */
-    private void preflightUpstream(List<String> endpoints) {
+    private void preflightUpstream(List<String> endpoints, String bindAddress, String proxy) {
+        // A probe from here says nothing useful about a proxied route: the worker is what dials
+        // through the proxy, and guessing at its exit would produce a false "NOT reachable".
+        if (proxy != null && !proxy.isBlank()) {
+            getLogger().info("upstream preflight skipped: bridge.proxy is set, so the worker performs"
+                    + " the check through it - its own connect result is logged as worker: [upstream] ...");
+            return;
+        }
+        String bind = bindAddress == null || bindAddress.isBlank() ? null : bindAddress.trim();
         getServer().getScheduler().runTaskAsynchronously(this, () -> {
             for (String endpoint : endpoints) {
                 int colon = endpoint.lastIndexOf(':');
@@ -175,11 +204,15 @@ public final class LoginGuardPlugin extends JavaPlugin {
                     InetAddress address = InetAddress.getByName(host);
                     long started = System.nanoTime();
                     try (Socket probe = new Socket()) {
+                        if (bind != null) {
+                            probe.bind(new InetSocketAddress(bind, 0));
+                        }
                         probe.connect(new InetSocketAddress(address, port), 3000);
                     }
                     long ms = (System.nanoTime() - started) / 1_000_000;
                     getLogger().info("upstream " + endpoint + " reachable (" + ms + " ms, "
-                            + address.getHostAddress() + ")");
+                            + address.getHostAddress() + ")"
+                            + (bind == null ? "" : " from " + bind));
                     if (isLocalAddress(address)) {
                         getLogger().warning("upstream " + endpoint + " is an address of this machine;"
                                 + " the auth server must be listening on that port here for the bridge to work");
@@ -207,6 +240,17 @@ public final class LoginGuardPlugin extends JavaPlugin {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /** A proxy spec with any credentials removed, so the console never prints a password. */
+    private static String maskProxy(String spec) {
+        String trimmed = spec.trim();
+        int at = trimmed.lastIndexOf('@');
+        if (at < 0) {
+            return trimmed;
+        }
+        int schemeEnd = trimmed.indexOf("://");
+        return (schemeEnd < 0 ? "" : trimmed.substring(0, schemeEnd + 3)) + "...@" + trimmed.substring(at + 1);
     }
 
     /** Safe folder name for a host: dots kept, anything outside [A-Za-z0-9.-] underscored. */

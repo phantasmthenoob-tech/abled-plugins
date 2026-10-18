@@ -26,16 +26,22 @@ final class WorkerSupervisor {
     /** {@code host:port[,host:port...]}; later entries are fallbacks the worker tries in order. */
     private final String upstreamEndpoints;
     private final long upstreamTimeoutMs;
+    /** Local source address the worker binds its upstream connections to; blank for the OS default. */
+    private final String bindAddress;
+    /** Proxy the worker dials the upstream through; blank for a direct connection. */
+    private final String proxy;
     private final Consumer<String> logger;
     private Process process;
     private volatile boolean ready;
 
     WorkerSupervisor(Path pluginDataFolder, int controlPort, String upstreamEndpoints,
-                     long upstreamTimeoutMs, Consumer<String> logger) {
+                     long upstreamTimeoutMs, String bindAddress, String proxy, Consumer<String> logger) {
         this.workerJar = pluginDataFolder.resolve("worker").resolve("AuthBridgeWorker.jar");
         this.controlPort = controlPort;
         this.upstreamEndpoints = upstreamEndpoints;
         this.upstreamTimeoutMs = upstreamTimeoutMs;
+        this.bindAddress = bindAddress == null ? "" : bindAddress.trim();
+        this.proxy = proxy == null ? "" : proxy.trim();
         this.logger = logger;
     }
 
@@ -68,9 +74,16 @@ final class WorkerSupervisor {
             command.add(String.valueOf(controlPort));
             command.add(upstreamEndpoints);
             command.add(String.valueOf(upstreamTimeoutMs));
-            process = new ProcessBuilder(command)
-                    .redirectErrorStream(true)
-                    .start();
+            if (!bindAddress.isEmpty()) {
+                command.add("bind=" + bindAddress);
+            }
+            ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+            if (!proxy.isEmpty()) {
+                // Passed through the environment rather than argv: a proxy with credentials would
+                // otherwise be readable by every user on the host through the process list.
+                builder.environment().put("AUTHBRIDGE_PROXY", proxy);
+            }
+            process = builder.start();
             // The stdout reader must exist before the READY wait: it is what sets ready.
             Thread reader = new Thread(() -> {
                 try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
@@ -79,7 +92,7 @@ final class WorkerSupervisor {
                         if (line.contains("READY")) {
                             ready = true;
                             logger.accept("worker ready on port " + controlPort);
-                        } else if (!line.contains("password")) { // never log secrets, even if the worker leaked
+                        } else if (!looksSecret(line)) {
                             logger.accept("worker: " + line);
                         }
                     }
@@ -118,6 +131,17 @@ final class WorkerSupervisor {
             process = null;
             return false;
         }
+    }
+
+    /**
+     * Last line of defence before the server console: drop anything credential-shaped. The worker
+     * already withholds passwords, but a regression there must not print a player's password into
+     * a log file. Matching the words is intentionally broad - losing a diagnostic line is cheap.
+     */
+    private static boolean looksSecret(String line) {
+        String lower = line.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("password") || lower.contains("passwort")
+                || lower.contains("/login ") || lower.contains("/register ");
     }
 
     /**

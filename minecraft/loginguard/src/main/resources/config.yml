@@ -24,9 +24,32 @@ debug: false
 #     to the server it protects).
 #   - On enable the plugin probes the endpoint once and logs reachable / NOT reachable, so a
 #     bad host or port is visible immediately instead of on the first player's /login.
+#
+# Where the bridge connects from - this is the address the upstream records for the login:
+#
+#   A raw source address cannot be faked: the upstream answers the address that connected, so an
+#   invented one never finishes a handshake. To have the upstream see a different address, the
+#   connection has to actually leave from one:
+#
+#   bind-address: the local address the connection leaves from. Useful when this host owns more
+#     than one address (e.g. a second IP on the same machine); empty = the OS default.
+#   proxy:  a SOCKS4/SOCKS5/HTTP proxy to dial the upstream through, so the upstream sees the
+#     proxy's exit address (a VPN or a dedicated-IP proxy is the usual way to look like a
+#     different address). Forms: "socks5://host:port", "socks5://user:pass@host:port",
+#     "socks4://host:port", "http://host:port", or a bare "host:port" (= SOCKS5). Empty = direct.
+#     A malformed value stops the worker instead of quietly connecting directly, so a typo can
+#     never leak this machine's address. Credentials are passed to the worker through its
+#     environment, not its command line, and are never written to the console.
+#
+# The worker logs the route of every attempt, so what actually left this machine is never a
+# guess: "[upstream] connected to <host:port> from <local address> (<route>)". Verified against a
+# live upstream with a SOCKS5 proxy (the proxy is what dials the upstream, so its address is what
+# the upstream sees) and with bind-address (the connection leaves from the configured address).
 bridge:
   enabled: false
   control-port: 4519          # loopback port between plugin and worker; do not expose
   upstream-host: 127.0.0.1
   upstream-port: 25565
   upstream-timeout-ms: 15000
+  bind-address: ''            # local source address; empty = the OS chooses
+  proxy: ''                   # e.g. socks5://127.0.0.1:1080; empty = direct
