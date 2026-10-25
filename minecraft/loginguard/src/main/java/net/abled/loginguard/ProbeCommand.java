@@ -76,6 +76,8 @@ final class ProbeCommand implements CommandExecutor {
                 report.add("\u00A77a published port (the one players use) is usually not the port the server"
                         + " listens on inside its container: list the upstream's real internal address,"
                         + " e.g. 127.0.0.1:25565, in bridge.upstream-endpoints");
+                report.add("\u00A77if " + targets.get(0) + " is how players join THIS server, the bridge is"
+                        + " pointed at itself: use the separate auth server's internal address instead");
             } else {
                 report.add("\u00A77put a reachable endpoint first in bridge.upstream-endpoints and restart,"
                         + " so the worker dials it before any other");

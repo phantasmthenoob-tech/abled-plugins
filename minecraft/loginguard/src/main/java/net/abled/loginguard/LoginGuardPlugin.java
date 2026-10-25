@@ -105,6 +105,7 @@ public final class LoginGuardPlugin extends JavaPlugin {
             }
             manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
                     msg -> getLogger().info(msg), supervisor::revive), store);
+            manager.setBridgeEndpoints(endpoints);
             getLogger().info("bridge mode: verifying against " + String.join(",", endpoints));
             // Say what the upstream will see, without ever printing a proxy credential.
             if (proxy != null && !proxy.isBlank()) {
@@ -172,7 +173,11 @@ public final class LoginGuardPlugin extends JavaPlugin {
      * <p>The loopback twin is skipped when the first endpoint is already loopback or uses the port
      * this server itself listens on: the verifier would then be pointed at the server it protects,
      * which locks the ghost client and re-enters the bridge against itself instead of
-     * authenticating anywhere.
+     * authenticating anywhere. Note the twin cannot catch a published-port self-reference: when
+     * the configured endpoint is this server's own public join address (e.g. play.example.com:50252
+     * while this server listens on 25565 inside its container), the port differs, so the twin is
+     * still added and both attempts are refused - the preflight and the per-login hint call that
+     * shape out explicitly instead.
      */
     private List<String> upstreamEndpoints(String upstreamHost, int upstreamPort, List<String> explicit) {
         List<String> endpoints = new ArrayList<>();
@@ -259,10 +264,22 @@ public final class LoginGuardPlugin extends JavaPlugin {
                 return;
             }
             getLogger().warning("no bridge upstream endpoint answered; every /login and /register will be denied");
-            getLogger().warning("TCP ports this machine listens on: " + EndpointProbe.describeListeningPorts());
+            getLogger().warning("TCP ports this machine listens on: " + EndpointProbe.describeListeningPorts()
+                    + " (this server itself listens on " + getServer().getPort() + ")");
             getLogger().warning("a published port (the one players connect to) is usually not the port the"
                     + " server listens on inside its container; list the upstream's real internal address"
                     + " first in bridge.upstream-endpoints, or test one with /loginguard probe <host:port>");
+            // The snow.playwithbao.com:50252 report: both the public address and the 127.0.0.1
+            // twin refused, because 50252 was the published join port of THIS server, not the auth
+            // server's internal port. The internal-port check above cannot catch that (50252 != the
+            // server's own listen port), so say it outright: pointing the bridge at this server's
+            // own join address can never answer and fails every login closed.
+            if (!endpoints.isEmpty()) {
+                getLogger().warning("if " + endpoints.get(0) + " is how players join THIS server, the bridge"
+                        + " is pointed at itself: set bridge.upstream-endpoints to the separate auth server's"
+                        + " internal address (e.g. its container IP with its real listen port), never this"
+                        + " server's public address/port");
+            }
         });
     }
 

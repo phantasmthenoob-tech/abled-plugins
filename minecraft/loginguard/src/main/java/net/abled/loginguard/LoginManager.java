@@ -35,6 +35,9 @@ final class LoginManager {
     /** Optional bridge; null in local-only mode. */
     private BridgeClient bridge;
     private LoginStore bridgeStore;
+    /** Endpoints the worker dials, in order; logged with every UPSTREAM_DOWN so the console
+     * names everything that was tried, not just the last twin the worker reports. */
+    private volatile java.util.List<String> bridgeEndpoints = java.util.List.of();
 
     LoginManager(JavaPlugin plugin, LoginStore store) {
         this.plugin = plugin;
@@ -49,6 +52,10 @@ final class LoginManager {
     void setBridge(BridgeClient client, LoginStore store) {
         this.bridge = client;
         this.bridgeStore = store;
+    }
+
+    void setBridgeEndpoints(java.util.List<String> endpoints) {
+        this.bridgeEndpoints = endpoints == null ? java.util.List.of() : java.util.List.copyOf(endpoints);
     }
 
     boolean isAuthenticated(UUID id) {
@@ -136,14 +143,34 @@ final class LoginManager {
             Verdict verdict = action == RequestAction.REGISTER
                     ? bridge.verify(name, password, LoginGuardPlugin.Mode.REGISTER)
                     : bridge.verify(name, password, LoginGuardPlugin.Mode.LOGIN);
-            log.accept("bridge verdict for " + action.toString().toLowerCase() + " of " + name + ": " + verdict);
+            log.accept("bridge verdict for " + action.toString().toLowerCase() + " of " + name + ": " + verdict
+                    + (verdict == Verdict.UPSTREAM_DOWN && !bridgeEndpoints.isEmpty()
+                            ? " (tried " + String.join(", ", bridgeEndpoints) + ")" : ""));
             if (verdict == Verdict.UPSTREAM_DOWN) {
                 if (!upstreamHintLogged) {
                     upstreamHintLogged = true;
-                    log.accept("the worker could not reach the upstream - run /loginguard probe to test"
-                            + " the configured endpoints and see which ports this machine listens on; a box's"
-                            + " own published port is usually refused from inside it, so a container needs the"
-                            + " upstream's internal address in bridge.upstream-endpoints");
+                    String tried = bridgeEndpoints.isEmpty() ? "the configured endpoint"
+                            : String.join(", ", bridgeEndpoints);
+                    String first = bridgeEndpoints.isEmpty() ? "" : bridgeEndpoints.get(0);
+                    log.accept("the worker could not reach the upstream (tried " + tried + ")"
+                            + " - run /loginguard probe to test each endpoint and see which ports this"
+                            + " machine listens on (" + EndpointProbe.describeListeningPorts() + ")");
+                    // The exact trap in the snow.playwithbao.com:50252 report: both the public
+                    // address and its 127.0.0.1 twin were refused. A published port is the one
+                    // players join on, not the port anything listens on inside the container, so
+                    // when the configured endpoint IS this server's own join address the bridge is
+                    // pointed at itself and can never answer - it must name the separate auth
+                    // server's internal address in bridge.upstream-endpoints instead.
+                    if (!first.isBlank()) {
+                        log.accept("if " + first + " is how players join THIS server, the bridge is"
+                                + " pointed at itself: set bridge.upstream-endpoints to the auth server's"
+                                + " real internal address (e.g. 172.x.x.x:25565 or 127.0.0.1:25565 when"
+                                + " co-hosted), never this server's public address/port");
+                    } else {
+                        log.accept("a box's own published port is usually refused from inside it, so a"
+                                + " container needs the upstream's internal address in"
+                                + " bridge.upstream-endpoints");
+                    }
                 }
             } else {
                 upstreamHintLogged = false;

@@ -28,6 +28,11 @@ debug: false
 #     cannot dial its own published address. When both the public address and the loopback twin
 #     are refused, the upstream's real internal address is the one to configure - either as
 #     upstream-host/upstream-port, or in upstream-endpoints below.
+#   - NEVER point the bridge at this server's own public join address (e.g. play.example.com:50252
+#     when that is how players join the server LoginGuard protects): from inside the container that
+#     address is refused, 127.0.0.1:<that port> is refused too, and every /login fails with
+#     UPSTREAM_DOWN. The bridge must name the SEPARATE auth server's internal address - e.g.
+#     172.18.0.5:25565, or 127.0.0.1:25565 when co-hosted - never this server's join address.
 #   - /loginguard probe                tests the configured endpoints, in order
 #     /loginguard probe <host:port>    tests one candidate without editing the config
 #     Both print what answered, what resolved, and the TCP ports this machine listens on.
