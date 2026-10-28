@@ -37,17 +37,22 @@ final class ProbeCommand implements CommandExecutor {
             sender.sendMessage("\u00A7cyou do not have loginguard.admin");
             return true;
         }
-        if (args.length > 1) {
+        // The documented form is "/loginguard probe [host:port]", so Bukkit hands this executor
+        // ["probe", "<host:port>"] - the literal subcommand word is stripped, not parsed as an
+        // endpoint. Without this, the documented form always died with the usage line (two words)
+        // or "not host:port: probe" (one word), and only the undocumented bare-host form worked.
+        List<String> words = ProbeArgs.commandWords(args);
+        if (words.size() > 1) {
             sender.sendMessage("\u00A7cusage: /" + label + " probe [host:port]");
             return true;
         }
         List<String> targets = new ArrayList<>();
-        if (args.length == 1) {
-            if (EndpointProbe.parse(args[0]) == null) {
-                sender.sendMessage("\u00A7cnot host:port: " + args[0]);
+        if (words.size() == 1) {
+            if (EndpointProbe.parse(words.get(0)) == null) {
+                sender.sendMessage("\u00A7cnot host:port: " + words.get(0));
                 return true;
             }
-            targets.add(args[0].trim());
+            targets.add(words.get(0).trim());
         } else {
             targets.addAll(endpoints.get());
         }

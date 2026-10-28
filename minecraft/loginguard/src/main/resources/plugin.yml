@@ -1,5 +1,5 @@
 name: LoginGuard
-version: '1.5.1'
+version: '1.5.2'
 main: net.abled.loginguard.LoginGuardPlugin
 api-version: '1.21'
 authors: [Abled]
