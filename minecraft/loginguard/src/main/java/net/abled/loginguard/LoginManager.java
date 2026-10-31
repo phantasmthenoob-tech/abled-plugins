@@ -29,8 +29,10 @@ final class LoginManager {
     /** Who has a saved record: filled at join (one read), updated on register/login success. */
     private final Set<UUID> knownRecords = ConcurrentHashMap.newKeySet();
     private Consumer<String> log;
-    /** One actionable hint per outage, not one per failed /login attempt. */
-    private volatile boolean upstreamHintLogged;
+    /** One actionable hint per outage kind, not one per failed /login attempt. A TIMEOUT must
+     * not re-arm the DOWN hint and vice versa: the October report alternated the two every few
+     * seconds and the console got the same hint twice. Decisive verdicts clear the set. */
+    private final Set<String> loggedHintKeys = ConcurrentHashMap.newKeySet();
 
     /** Optional bridge; null in local-only mode. */
     private BridgeClient bridge;
@@ -140,40 +142,25 @@ final class LoginManager {
         String name = player.getName();
         player.sendMessage("\u00A77verifying, hold on...");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            Verdict verdict = action == RequestAction.REGISTER
-                    ? bridge.verify(name, password, LoginGuardPlugin.Mode.REGISTER)
-                    : bridge.verify(name, password, LoginGuardPlugin.Mode.LOGIN);
+            BridgeClient.BridgeResult result = action == RequestAction.REGISTER
+                    ? bridge.verifyDetailed(name, password, LoginGuardPlugin.Mode.REGISTER)
+                    : bridge.verifyDetailed(name, password, LoginGuardPlugin.Mode.LOGIN);
+            Verdict verdict = result.verdict();
             log.accept("bridge verdict for " + action.toString().toLowerCase() + " of " + name + ": " + verdict
                     + (verdict == Verdict.UPSTREAM_DOWN && !bridgeEndpoints.isEmpty()
                             ? " (tried " + String.join(", ", bridgeEndpoints) + ")" : ""));
-            if (verdict == Verdict.UPSTREAM_DOWN) {
-                if (!upstreamHintLogged) {
-                    upstreamHintLogged = true;
-                    String tried = bridgeEndpoints.isEmpty() ? "the configured endpoint"
-                            : String.join(", ", bridgeEndpoints);
-                    String first = bridgeEndpoints.isEmpty() ? "" : bridgeEndpoints.get(0);
-                    log.accept("the worker could not reach the upstream (tried " + tried + ")"
-                            + " - run /loginguard probe to test each endpoint and see which ports this"
-                            + " machine listens on (" + EndpointProbe.describeListeningPorts() + ")");
-                    // The exact trap in the snow.playwithbao.com:50252 report: both the public
-                    // address and its 127.0.0.1 twin were refused. A published port is the one
-                    // players join on, not the port anything listens on inside the container, so
-                    // when the configured endpoint IS this server's own join address the bridge is
-                    // pointed at itself and can never answer - it must name the separate auth
-                    // server's internal address in bridge.upstream-endpoints instead.
-                    if (!first.isBlank()) {
-                        log.accept("if " + first + " is how players join THIS server, the bridge is"
-                                + " pointed at itself: set bridge.upstream-endpoints to the auth server's"
-                                + " real internal address (e.g. 172.x.x.x:25565 or 127.0.0.1:25565 when"
-                                + " co-hosted), never this server's public address/port");
-                    } else {
-                        log.accept("a box's own published port is usually refused from inside it, so a"
-                                + " container needs the upstream's internal address in"
-                                + " bridge.upstream-endpoints");
-                    }
+            // The hint follows the worker's evidence, not just the verdict: a ghost kicked for
+            // "already playing" was previously reported as unreachable although the upstream had
+            // clearly answered, and a ghost stuck at the AuthMe prompt timed out with no hint.
+            UpstreamDiagnosis.diagnose(verdict, result.detail(), bridgeEndpoints,
+                    EndpointProbe.describeListeningPorts()).ifPresent(hint -> {
+                if (loggedHintKeys.add(hint.key())) {
+                    hint.lines().forEach(log);
                 }
-            } else {
-                upstreamHintLogged = false;
+            });
+            switch (verdict) {
+                case SUCCESS, WRONG_PASSWORD, NO_ACCOUNT -> loggedHintKeys.clear();
+                default -> { /* outage continues: keep the logged hints logged */ }
             }
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!player.isOnline() || !player.getUniqueId().equals(id)) {

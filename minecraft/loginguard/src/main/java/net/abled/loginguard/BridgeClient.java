@@ -10,9 +10,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -36,19 +33,31 @@ final class BridgeClient {
         this.revival = revival;
     }
 
+    /** Verdict plus the worker's detail text, so callers can diagnose on evidence. */
+    record BridgeResult(Verdict verdict, String detail) {
+    }
+
     /**
      * Blocking verification. Returns before {@code waitMs} elapses only with a real classified
      * verdict; every failure mode collapses to deny-verdicts.
      */
     Verdict verify(String username, String password, LoginGuardPlugin.Mode action) {
+        return verifyDetailed(username, password, action).verdict();
+    }
+
+    /**
+     * Same exchange as {@link #verify}, but the worker's detail text travels with the verdict
+     * instead of living only in the log line, so the outage hint can react to what the worker
+     * actually saw upstream.
+     */
+    BridgeResult verifyDetailed(String username, String password, LoginGuardPlugin.Mode action) {
         UUID id = UUID.randomUUID();
-        BlockingQueue<Verdict> answer = new ArrayBlockingQueue<>(1);
         try {
             return attempt(id, username, password, action);
         } catch (IOException dead) {
             if (revival == null) {
                 logger.accept("bridge: worker unreachable: " + dead.getMessage());
-                return Verdict.UPSTREAM_DOWN;
+                return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             }
             // The worker died at runtime (crash, host restart, port steal). One revive, then
             // one retry keeps a single transient failure from turning into a missing worker
@@ -60,24 +69,24 @@ final class BridgeClient {
             }
             if (!revived) {
                 logger.accept("bridge: worker unreachable and could not be revived; denying");
-                return Verdict.UPSTREAM_DOWN;
+                return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             }
             try {
                 return attempt(id, username, password, action);
             } catch (IOException still) {
                 logger.accept("bridge: worker unreachable after revive: " + still.getMessage());
-                return Verdict.UPSTREAM_DOWN;
+                return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             } catch (IllegalArgumentException still) {
                 logger.accept("bridge: unparsable worker reply after revive; denying");
-                return Verdict.UPSTREAM_TIMEOUT;
+                return new BridgeResult(Verdict.UPSTREAM_TIMEOUT, "");
             }
         } catch (IllegalArgumentException e) {
             logger.accept("bridge: unparsable worker reply; denying");
-            return Verdict.UPSTREAM_TIMEOUT;
+            return new BridgeResult(Verdict.UPSTREAM_TIMEOUT, "");
         }
     }
 
-    private Verdict attempt(UUID id, String username, String password, LoginGuardPlugin.Mode action)
+    private BridgeResult attempt(UUID id, String username, String password, LoginGuardPlugin.Mode action)
             throws IOException, IllegalArgumentException {
         try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), workerPort)) {
             socket.setSoTimeout((int) waitMs);
@@ -87,17 +96,18 @@ final class BridgeClient {
                     + " " + username + " " + password);
             String line = in.readLine();
             if (line == null) {
-                return Verdict.UPSTREAM_DOWN;
+                return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             }
             Result result = Result.parse(line);
             if (!result.requestId().equals(id)) {
                 logger.accept("bridge: mismatched result id; denying");
-                return Verdict.UPSTREAM_TIMEOUT;
+                return new BridgeResult(Verdict.UPSTREAM_TIMEOUT, "");
             }
-            if (result.detail() != null && !result.detail().isBlank()) {
-                logger.accept("bridge: worker detail: " + result.detail());
+            String detail = result.detail() == null ? "" : result.detail();
+            if (!detail.isBlank()) {
+                logger.accept("bridge: worker detail: " + detail);
             }
-            return result.verdict();
+            return new BridgeResult(result.verdict(), detail);
         }
     }
 }
