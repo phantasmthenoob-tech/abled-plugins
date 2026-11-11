@@ -42,6 +42,12 @@ import java.util.List;
  *
  * <p>With {@code bridge.enabled: false} behaviour falls back to the local logins folder exactly
  * as before. Fail-closed: any bridge outage denies instead of letting people in.
+ *
+ * <p>{@code /loginguard execute as <username> <host:port> <command>} goes the other way: it reads
+ * the saved record of a player who has logged in here before, logs in upstream as them, and runs
+ * one command in that authenticated session - {@code /op someone}, a gamemode switch, anything the
+ * auth server lets that account run. It needs bridge mode and a saved record, and it never accepts
+ * a password on the command line.
  */
 public final class LoginGuardPlugin extends JavaPlugin {
 
@@ -49,6 +55,8 @@ public final class LoginGuardPlugin extends JavaPlugin {
 
     private LoginManager manager;
     private WorkerSupervisor supervisor;
+    /** The live bridge client, null while bridge mode is off; {@code /loginguard execute} needs it. */
+    private BridgeClient bridgeClient;
 
     @Override
     public void onEnable() {
@@ -103,8 +111,9 @@ public final class LoginGuardPlugin extends JavaPlugin {
             } else {
                 getLogger().info("worker process spawned (upstream " + String.join(",", endpoints) + ")");
             }
-            manager.setBridge(new BridgeClient(controlPort, upstreamTimeout + 5000,
-                    msg -> getLogger().info(msg), supervisor::revive), store);
+            bridgeClient = new BridgeClient(controlPort, upstreamTimeout + 5000,
+                    msg -> getLogger().info(msg), supervisor::revive);
+            manager.setBridge(bridgeClient, store);
             manager.setBridgeEndpoints(endpoints);
             getLogger().info("bridge mode: verifying against " + String.join(",", endpoints));
             // Say what the upstream will see, without ever printing a proxy credential.
@@ -129,8 +138,16 @@ public final class LoginGuardPlugin extends JavaPlugin {
         PluginCommand probe = getCommand("loginguard");
         if (probe != null) {
             List<String> probed = bridgeEndpoints;
-            probe.setExecutor(new ProbeCommand(this, () -> probed, bindAddress,
-                    proxy != null && !proxy.isBlank()));
+            ProbeCommand probeCommand = new ProbeCommand(this, () -> probed, bindAddress,
+                    proxy != null && !proxy.isBlank());
+            // execute: log in upstream as a player who has logged in here before, and run one
+            // command in that authenticated session (op, deop, gamemode, anything the server
+            // lets that player run). Fail-closed like the bridge: no record, no command.
+            ExecuteCommand executeCommand = new ExecuteCommand(this, loginsRoot,
+                    () -> bridgeClient, () -> probed, upstreamPort);
+            LoginguardCommand router = new LoginguardCommand(probeCommand, executeCommand);
+            probe.setExecutor(router);
+            probe.setTabCompleter(router);
         }
 
         LoginListener listener = new LoginListener(manager, getLogger(), debug);
@@ -295,7 +312,7 @@ public final class LoginGuardPlugin extends JavaPlugin {
     }
 
     /** Safe folder name for a host: dots kept, anything outside [A-Za-z0-9.-] underscored. */
-    private static String sanitizeFolder(String host) {
+    static String sanitizeFolder(String host) {
         String cleaned = host.replaceAll("[^A-Za-z0-9.-]", "_");
         return cleaned.isBlank() ? "unknown" : cleaned;
     }

@@ -7,15 +7,17 @@ import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * Plugin side of the bridge. Sends one verify request to the running worker and waits, bounded,
- * for its verdict. Any socket failure, malformed reply or wait timeout resolves to a deny-class
- * verdict: the bridge is fail-closed by construction.
+ * Plugin side of the bridge. Sends one request to the running worker and waits, bounded, for its
+ * verdict. Any socket failure, malformed reply or wait timeout resolves to a deny-class verdict:
+ * the bridge is fail-closed by construction.
+ *
+ * <p>Two requests exist. {@code VERIFY} checks a player's credentials. {@code EXEC} logs in as a
+ * player who already has a saved record, on an explicitly named upstream, and runs one operator
+ * command inside that authenticated session.
  */
 final class BridgeClient {
 
@@ -52,8 +54,37 @@ final class BridgeClient {
      */
     BridgeResult verifyDetailed(String username, String password, LoginGuardPlugin.Mode action) {
         UUID id = UUID.randomUUID();
+        // Split into 5: an offline-mode name never has a space, so the rest is the password.
+        String line = "VERIFY " + id + " " + (action == LoginGuardPlugin.Mode.REGISTER ? "REGISTER" : "LOGIN")
+                + " " + username + " " + password;
+        return exchange(id, line);
+    }
+
+    /**
+     * Logs in upstream as a player who has a saved record and runs one command as them. The worker
+     * dials exactly {@code endpoint}, and only sends the command after the upstream confirms the
+     * login, so a rejected password never executes anything.
+     *
+     * @param endpoint {@code host:port} of the server to run the command on
+     * @param command  the command line, with or without its leading slash
+     */
+    BridgeResult execute(String username, String password, String endpoint, String command) {
+        UUID id = UUID.randomUUID();
+        String clean = command == null ? "" : command.replace('\n', ' ').replace('\r', ' ').trim();
+        // The command is the last field and is allowed to contain spaces; the fields before it are
+        // one word each, which the plugin's own /login guarantees for a password.
+        String line = "EXEC " + id + " " + endpoint.trim() + " " + username.trim() + " "
+                + password.trim() + " " + clean;
+        return exchange(id, line);
+    }
+
+    /**
+     * One request/one reply over loopback, with the worker revived once when it is not listening.
+     * Everything that can go wrong without a verdict becomes a deny-class result.
+     */
+    private BridgeResult exchange(UUID id, String requestLine) {
         try {
-            return attempt(id, username, password, action);
+            return attempt(id, requestLine);
         } catch (IOException dead) {
             if (revival == null) {
                 logger.accept("bridge: worker unreachable: " + dead.getMessage());
@@ -62,7 +93,8 @@ final class BridgeClient {
             // The worker died at runtime (crash, host restart, port steal). One revive, then
             // one retry keeps a single transient failure from turning into a missing worker
             // until the next server restart.
-            boolean revived;try {
+            boolean revived;
+            try {
                 revived = revival.get();
             } catch (RuntimeException e) {
                 revived = false;
@@ -72,7 +104,7 @@ final class BridgeClient {
                 return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             }
             try {
-                return attempt(id, username, password, action);
+                return attempt(id, requestLine);
             } catch (IOException still) {
                 logger.accept("bridge: worker unreachable after revive: " + still.getMessage());
                 return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
@@ -86,14 +118,12 @@ final class BridgeClient {
         }
     }
 
-    private BridgeResult attempt(UUID id, String username, String password, LoginGuardPlugin.Mode action)
-            throws IOException, IllegalArgumentException {
+    private BridgeResult attempt(UUID id, String requestLine) throws IOException, IllegalArgumentException {
         try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), workerPort)) {
             socket.setSoTimeout((int) waitMs);
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-            out.println("VERIFY " + id + " " + (action == LoginGuardPlugin.Mode.REGISTER ? "REGISTER" : "LOGIN")
-                    + " " + username + " " + password);
+            out.println(requestLine);
             String line = in.readLine();
             if (line == null) {
                 return new BridgeResult(Verdict.UPSTREAM_DOWN, "");

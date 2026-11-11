@@ -114,7 +114,17 @@ public final class WorkerMain {
         UpstreamAuthenticator authenticator = new UpstreamAuthenticator(endpoints, timeoutMs, route,
                 line -> System.out.println("[observer] " + line));
         Function<Request, Result> handler = request -> {
-            UpstreamAuthenticator.Outcome outcome = authenticator.verify(request);
+            UpstreamAuthenticator.Outcome outcome;
+            if (request.action() == Request.Action.EXECUTE) {
+                // The operator named one address: dial exactly that, never a configured fallback.
+                UpstreamAuthenticator.Endpoint target = UpstreamAuthenticator.parseEndpoint(request.target());
+                outcome = target == null
+                        ? new UpstreamAuthenticator.Outcome(Verdict.UPSTREAM_DOWN,
+                                "UPSTREAM_DOWN, not host:port: " + request.target())
+                        : authenticator.execute(request, target);
+            } else {
+                outcome = authenticator.verify(request);
+            }
             return new Result(request.requestId(), outcome.verdict(), outcome.detail());
         };
 

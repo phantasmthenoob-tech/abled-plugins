@@ -1,5 +1,5 @@
 name: LoginGuard
-version: '1.5.3'
+version: '1.6.0'
 main: net.abled.loginguard.LoginGuardPlugin
 api-version: '1.21'
 authors: [Abled]
@@ -14,11 +14,11 @@ commands:
     usage: /login <password>
     aliases: [l]
   loginguard:
-    description: Test the bridge upstream endpoints and report what this machine listens on.
-    usage: /loginguard probe [host:port]
+    description: Bridge diagnostics, and running one command as a player who logged in before.
+    usage: /loginguard probe [host:port] | /loginguard execute as <username> <host:port> <command>
     aliases: [lg]
     permission: loginguard.admin
 permissions:
   loginguard.admin:
-    description: Run the LoginGuard bridge diagnostics.
+    description: Run the LoginGuard bridge diagnostics and execute commands as saved players.
     default: op

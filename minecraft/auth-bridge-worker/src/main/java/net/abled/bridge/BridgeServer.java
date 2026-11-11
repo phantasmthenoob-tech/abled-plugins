@@ -15,9 +15,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
- * Listens on loopback only. Protocol: one line per request
- * {@code VERIFY <uuid> <LOGIN|REGISTER> <username> <password>} and one line back
+ * Listens on loopback only. Protocol: one line per request, one line back
  * {@code RESULT <uuid> <VERDICT> [detail]}.
+ *
+ * <p>Requests are either
+ * {@code VERIFY <uuid> <LOGIN|REGISTER> <username> <password>} or
+ * {@code EXEC <uuid> <host:port> <username> <password> <command with spaces>} - the latter logs in
+ * as the player against exactly that address, then runs the command inside the authenticated
+ * session.
  *
  * <p>Binding is explicit: this socket must never be reachable from outside the host, since
  * passwords cross it. One verify session runs on one dedicated client connection upstream at a
@@ -92,14 +97,47 @@ final class BridgeServer {
     }
 
     private Request parse(String line) {
-        String[] parts = line.trim().split(" ", 5);
-        if (parts.length != 5 || !parts[0].equals("VERIFY")) {
+        return parseLine(line);
+    }
+
+    /**
+     * Parses one request line. Package-private so the wire format is pinned by a test: a wrong
+     * split here silently drops a password's spaces or truncates an operator command.
+     */
+    static Request parseLine(String line) {
+        String[] parts = line.trim().split(" ", 6);
+        if (parts.length < 2) {
             throw new IllegalArgumentException("bad request line");
         }
         UUID id = UUID.fromString(parts[1]);
-        Request.Action action = Request.Action.valueOf(parts[2]);
-        String username = parts[3];
-        String password = parts[4];
-        return new Request(id, username, password.toCharArray(), action);
+        if (parts[0].equals("VERIFY")) {
+            if (parts.length != 5) {
+                throw new IllegalArgumentException("bad verify line");
+            }
+            Request.Action action = Request.Action.valueOf(parts[2]);
+            if (action == Request.Action.EXECUTE) {
+                throw new IllegalArgumentException("EXECUTE cannot use the verify form");
+            }
+            String username = parts[3];
+            String password = parts[4];
+            return new Request(id, username, password.toCharArray(), action);
+        }
+        if (parts[0].equals("EXEC")) {
+            // EXEC <uuid> <host:port> <username> <password> <command...>: the command is the one
+            // field allowed to contain spaces, so it is kept whole. A password from this plugin's
+            // /login takes a single argument, so it never contains a space.
+            if (parts.length != 6) {
+                throw new IllegalArgumentException("bad exec line");
+            }
+            String target = parts[2];
+            String username = parts[3];
+            String password = parts[4];
+            String command = parts[5].replace('\n', ' ').replace('\r', ' ').trim();
+            if (target.isBlank() || username.isBlank() || password.isBlank() || command.isBlank()) {
+                throw new IllegalArgumentException("bad exec line");
+            }
+            return new Request(id, username, password.toCharArray(), Request.Action.EXECUTE, target, command);
+        }
+        throw new IllegalArgumentException("unknown request type: " + parts[0]);
     }
 }

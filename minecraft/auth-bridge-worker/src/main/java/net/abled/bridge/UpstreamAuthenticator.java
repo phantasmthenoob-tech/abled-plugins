@@ -45,6 +45,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * matching a command prompt selects the command flow. Anything unexpected times out and fails
  * closed. The command flow's first action with REGISTER reads the register prompt; LOGIN reads
  * the login prompt.
+ *
+ * <p>{@link #execute} reuses the login flow for one explicitly named endpoint, and once the
+ * upstream confirms the login it sends one operator command in that same authenticated session
+ * (the {@code /execute as <player> op <name>} shape an admin would type after logging in itself).
  */
 final class UpstreamAuthenticator {
 
@@ -64,6 +68,18 @@ final class UpstreamAuthenticator {
 
     private final List<Endpoint> endpoints;
     private final long timeoutMs;
+    /**
+     * How long the ghost waits for the upstream's answer to an operator command before it leaves
+     * and reports. LoginGuard commands answer in a few ticks; this only bounds a silent server.
+     */
+    private static final long COMMAND_GRACE_MS = 2000;
+    /** Fires the post-command grace window without blocking a packet thread. */
+    private final java.util.concurrent.ScheduledExecutorService graceTimer =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "bridge-command-grace");
+                t.setDaemon(true);
+                return t;
+            });
     /** Every observed upstream line/screen is printed here; the plugin prefixes it. */
     private final java.util.function.Consumer<String> observer;
     /** Local source address and/or proxy every attempt leaves through. */
@@ -142,6 +158,40 @@ final class UpstreamAuthenticator {
                 : last.outcome();
     }
 
+    /**
+     * Runs one operator command as the player, against the endpoint the operator named.
+     *
+     * <p>Only that address is dialled: the configured list is a verification fallback, and
+     * silently running {@code op} on a different server than the one asked for would be worse
+     * than failing. The command is sent only after the upstream itself confirms the login, so an
+     * unauthenticated session can never execute it.
+     */
+    Outcome execute(Request request, Endpoint target) {
+        if (request.commandAsString().isEmpty()) {
+            return new Outcome(Verdict.UPSTREAM_DOWN, "UPSTREAM_DOWN, no command given");
+        }
+        return verifyAt(target, request).outcome();
+    }
+
+    /** Parses {@code host:port}; null when the text is not a usable address. */
+    static Endpoint parseEndpoint(String spec) {
+        if (spec == null) {
+            return null;
+        }
+        String text = spec.trim();
+        int colon = text.lastIndexOf(':');
+        if (colon <= 0 || colon == text.length() - 1) {
+            return null;
+        }
+        String host = text.substring(0, colon);
+        try {
+            int port = Integer.parseInt(text.substring(colon + 1).trim());
+            return port < 1 || port > 65535 ? null : new Endpoint(host, port);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** One attempt against one endpoint. */
     private Attempt verifyAt(Endpoint endpoint, Request request) {
         AtomicReference<Verdict> outcome = new AtomicReference<>(Verdict.UPSTREAM_TIMEOUT);
@@ -156,6 +206,11 @@ final class UpstreamAuthenticator {
         AtomicBoolean connected = new AtomicBoolean(false);
         MinecraftProtocol protocol = new MinecraftProtocol(request.username());
         final AtomicReference<Session> sessionRef = new AtomicReference<>(null);
+        // EXECUTE only: the command line to run once the login is confirmed, whether it has been
+        // sent, and what the upstream answered to it.
+        String operatorCommand = request.commandAsString().orElse(null);
+        AtomicBoolean commandSent = new AtomicBoolean(false);
+        java.util.List<String> replies = java.util.Collections.synchronizedList(new ArrayList<>());
         // Every completion path (verdict or failure) must drop the ghost client at once: a
         // lingering logged-in session would kick the real player's next upstream login with
         // "logged in from another location".
@@ -164,8 +219,8 @@ final class UpstreamAuthenticator {
             // Only a session that actually reached the upstream has to be walked out; a refused
             // connection has nothing to disconnect and would only add noise to the log.
             if (live != null && connected.get()) {
-                live.disconnect(net.kyori.adventure.text.Component.text("LoginGuard bridge: verified"), null);
-                observer.accept("[upstream] ghost client left after the verdict");
+                live.disconnect(net.kyori.adventure.text.Component.text("LoginGuard bridge: finished"), null);
+                observer.accept("[upstream] ghost client left after the outcome");
             }
         };
         try {
@@ -215,7 +270,7 @@ final class UpstreamAuthenticator {
                         }
                     } else if (packet instanceof ClientboundSystemChatPacket chat) {
                         String text = PlainText.of(chat.getContent());
-                        if (!text.isBlank()) {
+                        if (!text.isBlank() && !commandSent.get()) {
                             evidence.set("[chat] " + safe(text));
                             observer.accept("[upstream] chat " + safe(text));
                         }
@@ -230,6 +285,30 @@ final class UpstreamAuthenticator {
                             // keep listening, other chat may still be the prompt.
                             responded.set(false);
                             return;
+                        }
+                        if (operatorCommand != null) {
+                            if (commandSent.get()) {
+                                // The upstream's answer to the operator's command is the report.
+                                if (!text.isBlank()) {
+                                    String line = safe(text);
+                                    replies.add(line);
+                                    evidence.set("[reply] " + line);
+                                    observer.accept("[upstream] reply " + line);
+                                }
+                                return;
+                            }
+                            if (Classifier.isSuccess(text)) {
+                                // The only point at which the command may be sent: the upstream
+                                // has just confirmed this ghost is authenticated.
+                                if (CommandFlow.sendOperatorCommand(s, operatorCommand, observer)) {
+                                    commandSent.set(true);
+                                    graceTimer.schedule(() -> {
+                                        outcome.set(Verdict.SUCCESS);
+                                        done.complete(Verdict.SUCCESS);
+                                    }, COMMAND_GRACE_MS, TimeUnit.MILLISECONDS);
+                                }
+                                return;
+                            }
                         }
                         Classifier.classify(text, outcome, done);
                     } else if (packet instanceof ClientboundResourcePackPushPacket pack) {
@@ -258,7 +337,14 @@ final class UpstreamAuthenticator {
                                         ? PlainText.of(l.getReason()) : "";
                         evidence.set("[disconnect] " + safe(reason));
                         observer.accept("[upstream] disconnect " + safe(reason));
-                        Classifier.onDisconnect(reason, outcome, done);
+                        if (commandSent.get()) {
+                            // Login was already confirmed and the command was sent: a kick now is
+                            // the upstream's reaction to the command, not a failed login.
+                            outcome.set(Verdict.SUCCESS);
+                            done.complete(Verdict.SUCCESS);
+                        } else {
+                            Classifier.onDisconnect(reason, outcome, done);
+                        }
                     }
                 }
 
@@ -275,16 +361,25 @@ final class UpstreamAuthenticator {
                         connectFailed.set(true);
                         transportReason.set(shortReason(cause));
                     }
-                    Classifier.onDisconnect("", outcome, done);
+                    if (commandSent.get()) {
+                        outcome.set(Verdict.SUCCESS);
+                        done.complete(Verdict.SUCCESS);
+                    } else {
+                        Classifier.onDisconnect("", outcome, done);
+                    }
                 }
             });
             done.whenComplete((verdict, error) -> leaveNow.run());
             org.geysermc.mcprotocollib.network.ClientSession clientSession =
                     (org.geysermc.mcprotocollib.network.ClientSession) session;
             clientSession.connect(true);
-            done.get(timeoutMs, TimeUnit.MILLISECONDS);
+            // An EXECUTE spends the login budget first and then waits the command grace on top.
+            done.get(operatorCommand == null ? timeoutMs : timeoutMs + COMMAND_GRACE_MS + 2000,
+                    TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
-            outcome.set(Verdict.UPSTREAM_TIMEOUT);
+            // A login that was confirmed before the deadline stands, even if the command's reply
+            // never arrived: the command was delivered, or the ghost would not have got this far.
+            outcome.set(commandSent.get() ? Verdict.SUCCESS : Verdict.UPSTREAM_TIMEOUT);
         } catch (Exception e) {
             observer.accept("[upstream] connection failed: " + e.getClass().getSimpleName());
             if (isTransportFailure(e)) {
@@ -299,6 +394,12 @@ final class UpstreamAuthenticator {
             // The endpoint was never reached. Naming it here is the difference between an
             // operator seeing "UPSTREAM_DOWN" and knowing what to fix.
             detail = verdict.name() + ", " + endpoint + " " + transportReason.get();
+        } else if (operatorCommand != null && verdict == Verdict.SUCCESS) {
+            // The operator asked for an action, so the report is what the upstream answered to it.
+            String verb = CommandFlow.verbOf(operatorCommand);
+            String answered = String.join(" | ", replies);
+            detail = "logged in and ran /" + verb
+                    + (answered.isBlank() ? " (no reply observed)" : ", upstream replied: " + safe(answered, 600));
         } else if (evidence.get() != null) {
             detail = verdict.name() + ", last observed: " + safe(evidence.get());
         } else if (verdict == Verdict.UPSTREAM_TIMEOUT) {
@@ -636,11 +737,32 @@ final class UpstreamAuthenticator {
                 sendCommand(session, "/register " + request.passwordAsString().orElse("") + " " + request.passwordAsString().orElse(""), observer);
                 return true;
             }
-            if ((lower.contains("log in") || lower.contains("login")) && request.action() == Request.Action.LOGIN) {
+            // EXECUTE logs in exactly like LOGIN; its command is only sent after the upstream
+            // confirms the login, never instead of it.
+            if ((lower.contains("log in") || lower.contains("login")) && request.needsLogin()) {
                 sendCommand(session, "/login " + request.passwordAsString().orElse(""), observer);
                 return true;
             }
             return false;
+        }
+
+        /**
+         * Sends one operator command in an already authenticated session. Returns false when
+         * there is nothing sendable, so the caller keeps waiting for the login instead.
+         */
+        static boolean sendOperatorCommand(Session session, String command,
+                                           java.util.function.Consumer<String> observer) {
+            String line = command.trim();
+            if (line.startsWith("/")) {
+                line = line.substring(1);
+            }
+            if (line.isBlank()) {
+                return false;
+            }
+            session.send(new ServerboundChatCommandPacket(line));
+            // The verb alone is logged: the arguments are the operator's business, not the log's.
+            observer.accept("[upstream] logged in; ran /" + verbOf(line));
+            return true;
         }
 
         private static void sendCommand(Session session, String command, java.util.function.Consumer<String> observer) {
@@ -663,12 +785,16 @@ final class UpstreamAuthenticator {
 
     /** Shared classifier. */
     private static final class Classifier {
+        /** AuthMe-style success wording (covers "successfully logged in" and common variants). */
+        static boolean isSuccess(String text) {
+            String lower = text.toLowerCase();
+            return lower.contains("logged in") || lower.contains("successfully") || lower.contains("success")
+                    || lower.contains("welcome") || lower.contains("you are now");
+        }
+
         static void classify(String text, AtomicReference<Verdict> outcome, CompletableFuture<Verdict> done) {
             String lower = text.toLowerCase();
-            // AuthMe-style success wording (covers "successfully logged in" and the common
-            // custom variants without the - adverb, e.g. "Login successful").
-            if (lower.contains("logged in") || lower.contains("successfully") || lower.contains("success")
-                    || lower.contains("welcome") || lower.contains("you are now")) {
+            if (isSuccess(text)) {
                 outcome.set(Verdict.SUCCESS);
                 done.complete(outcome.get());
             } else if (lower.contains("wrong password") || lower.contains("password is wrong")

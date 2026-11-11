@@ -79,6 +79,67 @@ final class LoginStore {
                         .findFirst());
     }
 
+    /**
+     * One saved login found by username rather than UUID, as {@code /loginguard execute as} needs
+     * it: the operator names a player, the plugin needs that player's saved password and where the
+     * record lives. The folder is the upstream the record was verified against.
+     */
+    record Stored(String username, String password, String upstreamFolder) {
+    }
+
+    /**
+     * Finds a record by username anywhere under the logins root - the active upstream's folder and
+     * its siblings - case-insensitively, because Bukkit names and record names differ in case.
+     * Reads files only, off the main thread (the caller runs this from the async scheduler).
+     *
+     * <p>Only records written by this plugin count: a player who has never logged in here has
+     * nothing saved, which is exactly the "logged in before" condition the command requires.
+     */
+    static Optional<Stored> findByUsername(Path root, String username) {
+        if (username == null || username.isBlank() || !Files.isDirectory(root)) {
+            return Optional.empty();
+        }
+        String wanted = username.trim();
+        try (var files = Files.walk(root, 2)) {
+            return files
+                    .filter(Files::isRegularFile)
+                    .filter(file -> file.getFileName().toString().endsWith(".login"))
+                    .map(file -> stored(root, file, wanted))
+                    .flatMap(Optional::stream)
+                    .findFirst();
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Reads one record file and keeps it when its stored username matches. */
+    private static Optional<Stored> stored(Path root, Path file, String wanted) {
+        try {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            String name = content.lines()
+                    .filter(line -> line.startsWith("username:"))
+                    .map(line -> line.substring("username:".length()).trim())
+                    .findFirst()
+                    .orElse("");
+            String password = content.lines()
+                    .filter(line -> line.startsWith("password:"))
+                    .map(line -> line.substring("password:".length()).trim())
+                    .findFirst()
+                    .orElse("");
+            if (name.isEmpty() || password.isEmpty() || !name.equalsIgnoreCase(wanted)) {
+                return Optional.empty();
+            }
+            Path parent = file.getParent();
+            // Records sit in logins/<upstream>/; a flat local-only record sits directly in root.
+            String folder = parent == null || parent.equals(root) || parent.getFileName() == null
+                    ? ""
+                    : parent.getFileName().toString();
+            return Optional.of(new Stored(name, password, folder));
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
     private void write(UUID id, String content) throws IOException {
         Path file = folder.resolve(id + ".login");
         try {
