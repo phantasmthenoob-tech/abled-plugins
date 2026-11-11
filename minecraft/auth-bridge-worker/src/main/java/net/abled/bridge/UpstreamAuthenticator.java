@@ -9,6 +9,7 @@ import org.geysermc.mcprotocollib.network.packet.Packet;
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol;
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundShowDialogConfigurationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundShowDialogGamePacket;
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandsPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundSystemChatPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundClearDialogPacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundResourcePackPushPacket;
@@ -228,6 +229,11 @@ final class UpstreamAuthenticator {
         // Set when the server drops the ghost after the command without answering it: a rejected
         // command looks exactly like that, so the report must not claim it worked.
         AtomicReference<String> kickedAfterCommand = new AtomicReference<>(null);
+        // The commands this account may run here, as the upstream itself listed them. A verb
+        // missing from it explains an "unknown command" reply without guessing.
+        AtomicReference<CommandTree> commandTree = new AtomicReference<>(null);
+        // Step verbs the upstream's tree does not offer this account (empty: unknown or all there).
+        AtomicReference<java.util.List<String>> refusedByTree = new AtomicReference<>(java.util.List.of());
         java.util.List<String> replies = java.util.Collections.synchronizedList(new ArrayList<>());
         // Every completion path (verdict or failure) must drop the ghost client at once: a
         // lingering logged-in session would kick the real player's next upstream login with
@@ -318,6 +324,15 @@ final class UpstreamAuthenticator {
                             if (Classifier.isSuccess(text)) {
                                 // The only point at which the command may be sent: the upstream
                                 // has just confirmed this ghost is authenticated.
+                                CommandTree tree = commandTree.get();
+                                java.util.List<String> missing = tree == null
+                                        ? java.util.List.of() : tree.missingVerbs(operatorSteps);
+                                refusedByTree.set(missing);
+                                for (String verb : missing) {
+                                    observer.accept("[upstream] /" + verb + " is not in this"
+                                            + " account's command tree - it is not op here, so the"
+                                            + " upstream will answer \"unknown command\"");
+                                }
                                 if (CommandFlow.sendOperatorCommands(s, operatorSteps, graceTimer,
                                         commandsSent, observer) > 0) {
                                     commandSent.set(true);
@@ -335,6 +350,12 @@ final class UpstreamAuthenticator {
                             }
                         }
                         Classifier.classify(text, outcome, done);
+                    } else if (packet instanceof ClientboundCommandsPacket commands) {
+                        CommandTree tree = CommandTree.of(commands);
+                        commandTree.set(tree);
+                        observer.accept("[upstream] command tree: " + tree.size()
+                                + " commands open to " + request.username()
+                                + (tree.isEmpty() ? " (empty - nothing can be concluded)" : ""));
                     } else if (packet instanceof ClientboundResourcePackPushPacket pack) {
                         // This upstream enforces its pack: a DECLINED answer gets the worker
                         // kicked before the auth prompt ever arrives. The server can only see
@@ -445,9 +466,22 @@ final class UpstreamAuthenticator {
                     detail += ", after replying: " + safe(answered, 400);
                 }
                 detail += sent == 0 ? " - nothing ran" : " - treat the commands as not applied";
+            } else if (!replies.isEmpty() && CommandFlow.looksRefused(replies.get(0))) {
+                // The upstream answered an error key (command.unknown.command and friends): the
+                // command reached the player's session and was refused there. Saying "ran" would
+                // be false, so the refusal is the report, with the tree gap as the reason.
+                detail = "the upstream refused it: " + safe(replies.get(0), 300);
             } else {
-                detail = "logged in and ran " + ran
-                        + (answered.isBlank() ? " (no reply observed)" : ", upstream replied: " + safe(answered, 600));
+                detail = "login confirmed"
+                        + (answered.isBlank() ? " (no reply to the command)"
+                                : "; the upstream answered: " + safe(answered, 600));
+            }
+            java.util.List<String> missing = refusedByTree.get();
+            if (!missing.isEmpty()) {
+                // Fact, not guesswork: these verbs were absent from the tree the server built for
+                // this account, which is what a vanilla server does for a player without them.
+                detail += " | the upstream's command tree for this account has no /"
+                        + String.join(", /", missing) + " - it is not op on that server";
             }
         } else if (evidence.get() != null) {
             detail = verdict.name() + ", last observed: " + safe(evidence.get());
@@ -814,6 +848,24 @@ final class UpstreamAuthenticator {
          * @return how many were queued; zero means there was nothing sendable, so the caller keeps
          *         waiting for the login instead of claiming an outcome
          */
+        /**
+         * Whether an upstream reply is a refusal rather than an answer. Vanilla sends these as
+         * translation keys ({@code command.unknown.command}, {@code command.context.here},
+         * {@code commands.setblock.failed}), which arrive as plain key text, so both the keys and
+         * the English wording are recognised.
+         */
+        static boolean looksRefused(String reply) {
+            if (reply == null) {
+                return false;
+            }
+            String lower = reply.toLowerCase(java.util.Locale.ROOT);
+            return lower.contains("command.unknown") || lower.contains("command.context")
+                    || lower.contains("unknown command") || lower.contains("unknown or incomplete")
+                    || lower.contains(".failed") || lower.contains("no permission")
+                    || lower.contains("not allowed") || lower.contains("not permitted")
+                    || lower.contains("cannot be placed") || lower.contains("that position is not loaded");
+        }
+
         static int sendOperatorCommands(Session session, java.util.List<String> steps,
                                         java.util.concurrent.ScheduledExecutorService scheduler,
                                         java.util.concurrent.atomic.AtomicInteger sentSoFar,

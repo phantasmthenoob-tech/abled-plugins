@@ -95,14 +95,14 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
         String detail = result.detail() == null ? "" : result.detail().trim();
         String where = request.username() + " on " + request.endpoint();
         String ran = "ran " + request.preview();
-        boolean droppedByServer = detail.toLowerCase().contains("disconnected the ghost");
+        // A kick or a refusal means the command did not take effect, whatever the verdict says:
+        // both are yellow and say so, because a green "ran" over a no-op is worse than no answer.
+        boolean notAccepted = CommandReply.looksDropped(detail) || CommandReply.looksRefused(detail);
         switch (result.verdict()) {
-            // A server that drops the ghost instead of answering did not accept the command: that
-            // line is yellow, not green, and says so, because the verdict alone cannot tell.
-            case SUCCESS -> lines.add(droppedByServer
-                    ? "\u00A7e" + where + ": " + detail
+            case SUCCESS -> lines.add(notAccepted
+                    ? CommandReply.refusedNotice(where, detail)
                     : "\u00A7a" + where + ": " + ran
-                            + (detail.isEmpty() ? " (no reply)" : ", upstream replied: " + detail));
+                            + (detail.isEmpty() ? " (no reply)" : ", " + detail));
             case WRONG_PASSWORD -> lines.add("\u00A7cthe upstream rejected the saved password for "
                     + stored.username() + " - the record is stale; have them /login once to refresh it");
             case NO_ACCOUNT -> lines.add("\u00A7cthe upstream has no account for " + stored.username());
@@ -112,24 +112,16 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
             case UPSTREAM_DOWN -> lines.add("\u00A7c" + where + ": the server did not answer"
                     + (detail.isEmpty() ? "" : " (" + detail + ")"));
         }
-        if (result.verdict() == Verdict.SUCCESS && looksLikePermissionDenial(detail)) {
-            // The ghost is that player, not an admin: /setblock, /gamemode and friends answer
-            // "unknown command" or "no permission" until the player itself is op upstream.
-            lines.add("\u00A77the command reached that player's session but was refused there - the"
-                    + " ghost is " + stored.username() + ", not an admin. Give it op first:"
-                    + " /loginguard execute as " + stored.username() + " " + request.endpoint()
-                    + " op " + stored.username());
+        if (result.verdict() == Verdict.SUCCESS && notAccepted) {
+            // The ghost is that player, not an admin: /setblock and /item answer "unknown command"
+            // until the player itself is op upstream, and /op cannot be granted from here because
+            // granting it needs a higher level than the player has.
+            lines.add("\u00A77that is " + stored.username() + "'s own permission upstream, so the"
+                    + " command has to run as an account that is op there. Give it op from that"
+                    + " server's console or panel (/op " + stored.username() + "), then retry;"
+                    + " \"/op\" itself needs level 3, so it cannot be run from here");
         }
         return lines;
-    }
-
-    /** The wording a vanilla/Paper server uses when the sender may not run a command. */
-    private static boolean looksLikePermissionDenial(String reply) {
-        String lower = reply.toLowerCase();
-        return lower.contains("unknown command") || lower.contains("unknown or incomplete command")
-                || lower.contains("do not have permission") || lower.contains("don't have permission")
-                || lower.contains("do not have access") || lower.contains("insufficient permission")
-                || lower.contains("you are not allowed");
     }
 
     /** The logins subfolder name for the endpoint's host, matching how records are filed. */
