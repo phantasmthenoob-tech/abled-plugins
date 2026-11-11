@@ -206,10 +206,13 @@ final class UpstreamAuthenticator {
         AtomicBoolean connected = new AtomicBoolean(false);
         MinecraftProtocol protocol = new MinecraftProtocol(request.username());
         final AtomicReference<Session> sessionRef = new AtomicReference<>(null);
-        // EXECUTE only: the command line to run once the login is confirmed, whether it has been
-        // sent, and what the upstream answered to it.
-        String operatorCommand = request.commandAsString().orElse(null);
+        // EXECUTE only: the command steps to run once the login is confirmed, whether they have
+        // been sent, what the upstream answered to them, and whether it kicked us instead.
+        java.util.List<String> operatorSteps = request.commandSteps();
         AtomicBoolean commandSent = new AtomicBoolean(false);
+        // Set when the server drops the ghost after the command without answering it: a rejected
+        // command looks exactly like that, so the report must not claim it worked.
+        AtomicReference<String> kickedAfterCommand = new AtomicReference<>(null);
         java.util.List<String> replies = java.util.Collections.synchronizedList(new ArrayList<>());
         // Every completion path (verdict or failure) must drop the ghost client at once: a
         // lingering logged-in session would kick the real player's next upstream login with
@@ -286,7 +289,7 @@ final class UpstreamAuthenticator {
                             responded.set(false);
                             return;
                         }
-                        if (operatorCommand != null) {
+                        if (!operatorSteps.isEmpty()) {
                             if (commandSent.get()) {
                                 // The upstream's answer to the operator's command is the report.
                                 if (!text.isBlank()) {
@@ -300,7 +303,7 @@ final class UpstreamAuthenticator {
                             if (Classifier.isSuccess(text)) {
                                 // The only point at which the command may be sent: the upstream
                                 // has just confirmed this ghost is authenticated.
-                                if (CommandFlow.sendOperatorCommand(s, operatorCommand, observer)) {
+                                if (CommandFlow.sendOperatorCommands(s, operatorSteps, observer) > 0) {
                                     commandSent.set(true);
                                     graceTimer.schedule(() -> {
                                         outcome.set(Verdict.SUCCESS);
@@ -339,7 +342,9 @@ final class UpstreamAuthenticator {
                         observer.accept("[upstream] disconnect " + safe(reason));
                         if (commandSent.get()) {
                             // Login was already confirmed and the command was sent: a kick now is
-                            // the upstream's reaction to the command, not a failed login.
+                            // the upstream's reaction to the command, not a failed login. Remember
+                            // it, so the report can say the server never answered.
+                            kickedAfterCommand.set(reason.isBlank() ? "no reason given" : reason);
                             outcome.set(Verdict.SUCCESS);
                             done.complete(Verdict.SUCCESS);
                         } else {
@@ -374,7 +379,7 @@ final class UpstreamAuthenticator {
                     (org.geysermc.mcprotocollib.network.ClientSession) session;
             clientSession.connect(true);
             // An EXECUTE spends the login budget first and then waits the command grace on top.
-            done.get(operatorCommand == null ? timeoutMs : timeoutMs + COMMAND_GRACE_MS + 2000,
+            done.get(operatorSteps.isEmpty() ? timeoutMs : timeoutMs + COMMAND_GRACE_MS + 2000,
                     TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
             // A login that was confirmed before the deadline stands, even if the command's reply
@@ -394,12 +399,23 @@ final class UpstreamAuthenticator {
             // The endpoint was never reached. Naming it here is the difference between an
             // operator seeing "UPSTREAM_DOWN" and knowing what to fix.
             detail = verdict.name() + ", " + endpoint + " " + transportReason.get();
-        } else if (operatorCommand != null && verdict == Verdict.SUCCESS) {
+        } else if (!operatorSteps.isEmpty() && verdict == Verdict.SUCCESS) {
             // The operator asked for an action, so the report is what the upstream answered to it.
-            String verb = CommandFlow.verbOf(operatorCommand);
+            StringBuilder ran = new StringBuilder();
+            for (String step : operatorSteps) {
+                ran.append(ran.isEmpty() ? "" : "; ").append('/').append(CommandFlow.verbOf(step));
+            }
             String answered = String.join(" | ", replies);
-            detail = "logged in and ran /" + verb
-                    + (answered.isBlank() ? " (no reply observed)" : ", upstream replied: " + safe(answered, 600));
+            String kicked = kickedAfterCommand.get();
+            if (answered.isBlank() && kicked != null) {
+                // The server dropped the ghost instead of answering: it did not accept the
+                // command, so saying "ran" without a warning would be a lie.
+                detail = "sent " + ran + " but the server disconnected the ghost before answering ("
+                        + safe(kicked) + ") - it was not accepted";
+            } else {
+                detail = "logged in and ran " + ran
+                        + (answered.isBlank() ? " (no reply observed)" : ", upstream replied: " + safe(answered, 600));
+            }
         } else if (evidence.get() != null) {
             detail = verdict.name() + ", last observed: " + safe(evidence.get());
         } else if (verdict == Verdict.UPSTREAM_TIMEOUT) {
@@ -747,22 +763,45 @@ final class UpstreamAuthenticator {
         }
 
         /**
-         * Sends one operator command in an already authenticated session. Returns false when
-         * there is nothing sendable, so the caller keeps waiting for the login instead.
+         * The protocol caps a player's command at 256 characters, and a server that receives a
+         * longer one rejects the packet and disconnects the client - silently, with no chat
+         * error. Long jobs therefore arrive as ';'-separated steps, each under this cap.
          */
-        static boolean sendOperatorCommand(Session session, String command,
-                                           java.util.function.Consumer<String> observer) {
-            String line = command.trim();
-            if (line.startsWith("/")) {
-                line = line.substring(1);
+        static final int MAX_COMMAND_CHARS = 256;
+
+        /**
+         * Sends every operator step, in order, in an already authenticated session. Returns how
+         * many were sent; zero means there was nothing sendable, so the caller keeps waiting for
+         * the login instead of claiming an outcome.
+         */
+        static int sendOperatorCommands(Session session, java.util.List<String> steps,
+                                        java.util.function.Consumer<String> observer) {
+            int sent = 0;
+            StringBuilder ran = new StringBuilder();
+            for (String raw : steps) {
+                String line = raw.trim();
+                if (line.startsWith("/")) {
+                    line = line.substring(1).trim();
+                }
+                if (line.isBlank()) {
+                    continue;
+                }
+                if (line.length() > MAX_COMMAND_CHARS) {
+                    // Sending it anyway would get the ghost kicked, which is worse than an
+                    // explanation: the plugin already refuses this, so this is a second net.
+                    observer.accept("[upstream] skipped /" + verbOf(line) + ": " + line.length()
+                            + " characters is over the " + MAX_COMMAND_CHARS + " a player may send");
+                    continue;
+                }
+                session.send(new ServerboundChatCommandPacket(line));
+                sent++;
+                // The verb alone is logged: the arguments are the operator's business, not the log's.
+                ran.append(ran.isEmpty() ? "" : " ").append('/').append(verbOf(line));
             }
-            if (line.isBlank()) {
-                return false;
+            if (sent > 0) {
+                observer.accept("[upstream] logged in; ran " + ran);
             }
-            session.send(new ServerboundChatCommandPacket(line));
-            // The verb alone is logged: the arguments are the operator's business, not the log's.
-            observer.accept("[upstream] logged in; ran /" + verbOf(line));
-            return true;
+            return sent;
         }
 
         private static void sendCommand(Session session, String command, java.util.function.Consumer<String> observer) {

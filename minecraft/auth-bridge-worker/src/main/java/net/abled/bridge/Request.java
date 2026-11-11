@@ -44,6 +44,30 @@ public record Request(UUID requestId, String username, char[] password, Action a
     }
 
     /**
+     * The command lines to run, in order. A long job is written as {@code cmd1 ; cmd2} because a
+     * player's command packet is capped at 256 characters - a server that receives more rejects
+     * the command and disconnects the client - so one huge {@code /setblock ...{NBT}} has to be
+     * split into steps the protocol can carry. Semicolons are not part of SNBT, so this only ever
+     * splits where an operator meant it to.
+     */
+    public java.util.List<String> commandSteps() {
+        if (command == null || command.isBlank()) {
+            return java.util.List.of();
+        }
+        java.util.List<String> steps = new java.util.ArrayList<>();
+        for (String piece : command.split(";")) {
+            String step = piece.trim();
+            if (step.startsWith("/")) {
+                step = step.substring(1).trim();
+            }
+            if (!step.isEmpty()) {
+                steps.add(step);
+            }
+        }
+        return steps;
+    }
+
+    /**
      * True when the ghost must present the login command, i.e. this is a LOGIN or an EXECUTE that
      * logs in before running its command.
      */

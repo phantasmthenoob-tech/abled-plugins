@@ -48,9 +48,9 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage("\u00A7cyou do not have loginguard.admin");
             return true;
         }
-        Optional<ExecuteArgs.Parsed> parsed = ExecuteArgs.parse(args, defaultPort);
-        if (parsed.isEmpty()) {
-            sender.sendMessage("\u00A7cusage: " + ExecuteArgs.usage());
+        ExecuteArgs.Parse parsed = ExecuteArgs.parse(args, defaultPort);
+        if (!parsed.ok()) {
+            sender.sendMessage("\u00A7c" + parsed.problem());
             return true;
         }
         BridgeClient client = bridge.get();
@@ -59,12 +59,12 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                     + " and restart (local-only records cannot reach another server)");
             return true;
         }
-        ExecuteArgs.Parsed request = parsed.get();
+        ExecuteArgs.Parsed request = parsed.parsed();
         // The whole command line, arguments included: an operator debugging a command needs to
         // see what was actually sent, not just its verb. This goes to the sender only; the console
         // line the worker emits stays verb-only.
         sender.sendMessage("\u00A77logging in upstream as " + request.username() + " on "
-                + request.endpoint() + " to run /" + request.command() + "...");
+                + request.endpoint() + " to run " + request.display() + "...");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             List<String> report = new ArrayList<>();
             Optional<LoginStore.Stored> found = LoginStore.findByUsername(loginsRoot, request.username());
@@ -94,15 +94,20 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                 request.endpoint(), request.command());
         String detail = result.detail() == null ? "" : result.detail().trim();
         String where = request.username() + " on " + request.endpoint();
-        String ran = "ran /" + request.command();
+        String ran = "ran " + request.display();
+        boolean droppedByServer = detail.toLowerCase().contains("disconnected the ghost");
         switch (result.verdict()) {
-            case SUCCESS -> lines.add("\u00A7a" + where + ": " + ran
-                    + (detail.isEmpty() ? " (no reply)" : ", upstream replied: " + detail));
+            // A server that drops the ghost instead of answering did not accept the command: that
+            // line is yellow, not green, and says so, because the verdict alone cannot tell.
+            case SUCCESS -> lines.add(droppedByServer
+                    ? "\u00A7e" + where + ": " + detail
+                    : "\u00A7a" + where + ": " + ran
+                            + (detail.isEmpty() ? " (no reply)" : ", upstream replied: " + detail));
             case WRONG_PASSWORD -> lines.add("\u00A7cthe upstream rejected the saved password for "
                     + stored.username() + " - the record is stale; have them /login once to refresh it");
             case NO_ACCOUNT -> lines.add("\u00A7cthe upstream has no account for " + stored.username());
             case UPSTREAM_TIMEOUT -> lines.add("\u00A7c" + where + ": the login never completed ("
-                    + (detail.isEmpty() ? "no answer" : detail) + "), so \"" + request.command()
+                    + (detail.isEmpty() ? "no answer" : detail) + "), so \"" + request.display()
                     + "\" was NOT run; a ghost session may still be lingering - wait a minute and retry");
             case UPSTREAM_DOWN -> lines.add("\u00A7c" + where + ": the server did not answer"
                     + (detail.isEmpty() ? "" : " (" + detail + ")"));
