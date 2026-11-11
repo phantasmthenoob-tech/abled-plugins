@@ -64,7 +64,7 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
         // see what was actually sent, not just its verb. This goes to the sender only; the console
         // line the worker emits stays verb-only.
         sender.sendMessage("\u00A77logging in upstream as " + request.username() + " on "
-                + request.endpoint() + " to run " + request.display() + "...");
+                + request.endpoint() + " to run " + request.preview() + "...");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             List<String> report = new ArrayList<>();
             Optional<LoginStore.Stored> found = LoginStore.findByUsername(loginsRoot, request.username());
@@ -94,7 +94,7 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                 request.endpoint(), request.command());
         String detail = result.detail() == null ? "" : result.detail().trim();
         String where = request.username() + " on " + request.endpoint();
-        String ran = "ran " + request.display();
+        String ran = "ran " + request.preview();
         boolean droppedByServer = detail.toLowerCase().contains("disconnected the ghost");
         switch (result.verdict()) {
             // A server that drops the ghost instead of answering did not accept the command: that
@@ -107,7 +107,7 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                     + stored.username() + " - the record is stale; have them /login once to refresh it");
             case NO_ACCOUNT -> lines.add("\u00A7cthe upstream has no account for " + stored.username());
             case UPSTREAM_TIMEOUT -> lines.add("\u00A7c" + where + ": the login never completed ("
-                    + (detail.isEmpty() ? "no answer" : detail) + "), so \"" + request.display()
+                    + (detail.isEmpty() ? "no answer" : detail) + "), so \"" + request.preview()
                     + "\" was NOT run; a ghost session may still be lingering - wait a minute and retry");
             case UPSTREAM_DOWN -> lines.add("\u00A7c" + where + ": the server did not answer"
                     + (detail.isEmpty() ? "" : " (" + detail + ")"));

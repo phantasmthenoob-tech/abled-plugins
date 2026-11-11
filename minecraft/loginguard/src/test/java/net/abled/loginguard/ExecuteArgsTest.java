@@ -81,6 +81,32 @@ class ExecuteArgsTest {
     }
 
     @Test
+    void aFullChestJobFitsInOneRequest() {
+        // Filling all 27 slots with enchanted gear plus an 18-effect potion is ~46 steps; the cap
+        // has to sit above that or the job cannot be expressed at all.
+        StringBuilder line = new StringBuilder("execute as Notch host:25565 setblock 1 2 3 minecraft:chest");
+        for (int slot = 0; slot < 27; slot++) {
+            line.append(" ; item replace block 1 2 3 container.").append(slot)
+                    .append(" with minecraft:diamond_sword[enchantments={levels:{sharpness:7,mending:1}}] 1");
+        }
+        for (int effect = 0; effect < 18; effect++) {
+            line.append(" ; data modify block 1 2 3 Items[{Slot:7b}].components.")
+                    .append("\"minecraft:potion_contents\".custom_effects append value")
+                    .append(" {id:\"speed\",amplifier:2,duration:36000}");
+        }
+
+        ExecuteArgs.Parse parsed = ExecuteArgs.parse(line.toString().split(" "), 25565);
+        assertTrue(parsed.ok(), parsed.problem());
+        assertEquals(46, parsed.parsed().steps().size());
+        for (String step : parsed.parsed().steps()) {
+            assertTrue(step.length() <= ExecuteArgs.MAX_STEP_LENGTH, step.length() + ": " + step);
+        }
+        // The report is cut to a screenful; running is not.
+        assertTrue(parsed.parsed().preview().length() < 320, parsed.parsed().preview());
+        assertTrue(parsed.parsed().preview().contains("more steps"), parsed.parsed().preview());
+    }
+
+    @Test
     void missingAsIsRefused() {
         assertFalse(ExecuteArgs.parse(new String[]{
                 "execute", "Notch", "host:25565", "op", "Notch"}, 25565).ok());

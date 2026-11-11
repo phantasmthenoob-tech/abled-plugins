@@ -24,8 +24,12 @@ final class ExecuteArgs {
     /** The command field of a player's chat command packet; a longer one gets the client kicked. */
     static final int MAX_STEP_LENGTH = 256;
 
-    /** A one-off job, not a script: enough steps to build a chest, few enough to stay readable. */
-    static final int MAX_STEPS = 12;
+    /**
+     * A one-off job, not a script. Filling a 27-slot chest with fully enchanted gear takes around
+     * 46 steps (one setblock, one item per slot, and one data-modify per potion effect), so the
+     * ceiling sits above that rather than at a round number.
+     */
+    static final int MAX_STEPS = 64;
 
     /** The three fields the worker needs, already validated. */
     record Parsed(String username, String endpoint, List<String> steps) {
@@ -43,7 +47,31 @@ final class ExecuteArgs {
             }
             return String.join("; ", slashed);
         }
+
+        /**
+         * The same line cut to a screenful: a 46-step chest job is thousands of characters, and a
+         * chat message that long is unreadable. The steps that run are always all of them.
+         */
+        String preview() {
+            StringBuilder out = new StringBuilder();
+            int shown = 0;
+            for (String step : steps) {
+                String piece = (shown == 0 ? "/" : "; /") + step;
+                if (shown > 0 && out.length() + piece.length() > PREVIEW_CHARS) {
+                    break;
+                }
+                out.append(piece);
+                shown++;
+            }
+            if (shown < steps.size()) {
+                out.append("; ... (+").append(steps.size() - shown).append(" more steps)");
+            }
+            return out.toString();
+        }
     }
+
+    /** Roughly one chat line worth of command, before the rest is summarised as a count. */
+    private static final int PREVIEW_CHARS = 220;
 
     /** Either a ready request or the reason this shape was refused, so nothing is guessed. */
     record Parse(Parsed parsed, String problem) {
@@ -58,7 +86,8 @@ final class ExecuteArgs {
 
     static String usage() {
         return "/loginguard execute as <username> <host:port> <command>"
-                + " (long jobs: cmd1 ; cmd2, each under " + MAX_STEP_LENGTH + " characters)";
+                + " (long jobs: cmd1 ; cmd2 ; ..., each under " + MAX_STEP_LENGTH
+                + " characters, at most " + MAX_STEPS + " commands)";
     }
 
     /**
@@ -96,7 +125,7 @@ final class ExecuteArgs {
         }
         if (steps.size() > MAX_STEPS) {
             return refused("that is " + steps.size() + " commands - at most " + MAX_STEPS
-                    + " are run in one session");
+                    + " are run in one session; split it across two runs");
         }
         for (String step : steps) {
             if (step.length() > MAX_STEP_LENGTH) {
