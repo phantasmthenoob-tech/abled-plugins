@@ -73,6 +73,18 @@ final class UpstreamAuthenticator {
      * and reports. LoginGuard commands answer in a few ticks; this only bounds a silent server.
      */
     private static final long COMMAND_GRACE_MS = 2000;
+    /**
+     * Wait after the login is confirmed before the first operator command.
+     *
+     * <p>AuthMe's {@code Protection.quickCommands.denyCommandsBeforeMilliseconds} (default 1000)
+     * <em>kicks</em> any player who runs a command within that window after joining - our ghost
+     * joins, logs in and would fire instantly, so its first command landed inside the window and
+     * the server dropped it with "You used a command too fast". Three seconds clears every
+     * realistic value, measured from join rather than from the login message.
+     */
+    private static final long COMMAND_START_DELAY_MS = 3000;
+    /** Gap between queued commands, so a burst cannot trip a server's own command rate limit. */
+    private static final long COMMAND_INTERVAL_MS = 300;
     /** Fires the post-command grace window without blocking a packet thread. */
     private final java.util.concurrent.ScheduledExecutorService graceTimer =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -210,6 +222,9 @@ final class UpstreamAuthenticator {
         // been sent, what the upstream answered to them, and whether it kicked us instead.
         java.util.List<String> operatorSteps = request.commandSteps();
         AtomicBoolean commandSent = new AtomicBoolean(false);
+        // How many queued commands actually left the socket, so a kick that arrives while the
+        // queue is still pacing out is not reported as if everything had been sent.
+        java.util.concurrent.atomic.AtomicInteger commandsSent = new java.util.concurrent.atomic.AtomicInteger(0);
         // Set when the server drops the ghost after the command without answering it: a rejected
         // command looks exactly like that, so the report must not claim it worked.
         AtomicReference<String> kickedAfterCommand = new AtomicReference<>(null);
@@ -303,12 +318,18 @@ final class UpstreamAuthenticator {
                             if (Classifier.isSuccess(text)) {
                                 // The only point at which the command may be sent: the upstream
                                 // has just confirmed this ghost is authenticated.
-                                if (CommandFlow.sendOperatorCommands(s, operatorSteps, observer) > 0) {
+                                if (CommandFlow.sendOperatorCommands(s, operatorSteps, graceTimer,
+                                        commandsSent, observer) > 0) {
                                     commandSent.set(true);
+                                    // The last command goes out at start + n * interval, so the
+                                    // report waits for the queue to drain before its grace window.
+                                    long finishAt = COMMAND_START_DELAY_MS
+                                            + (long) operatorSteps.size() * COMMAND_INTERVAL_MS
+                                            + COMMAND_GRACE_MS;
                                     graceTimer.schedule(() -> {
                                         outcome.set(Verdict.SUCCESS);
                                         done.complete(Verdict.SUCCESS);
-                                    }, COMMAND_GRACE_MS, TimeUnit.MILLISECONDS);
+                                    }, finishAt, TimeUnit.MILLISECONDS);
                                 }
                                 return;
                             }
@@ -379,7 +400,11 @@ final class UpstreamAuthenticator {
                     (org.geysermc.mcprotocollib.network.ClientSession) session;
             clientSession.connect(true);
             // An EXECUTE spends the login budget first and then waits the command grace on top.
-            done.get(operatorSteps.isEmpty() ? timeoutMs : timeoutMs + COMMAND_GRACE_MS + 2000,
+            // An EXECUTE spends the login budget, then the queued commands' pacing, then grace.
+            done.get(operatorSteps.isEmpty() ? timeoutMs
+                            : timeoutMs + COMMAND_START_DELAY_MS
+                                    + (long) operatorSteps.size() * COMMAND_INTERVAL_MS
+                                    + COMMAND_GRACE_MS + 3000,
                     TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
             // A login that was confirmed before the deadline stands, even if the command's reply
@@ -407,11 +432,19 @@ final class UpstreamAuthenticator {
             }
             String answered = String.join(" | ", replies);
             String kicked = kickedAfterCommand.get();
-            if (answered.isBlank() && kicked != null) {
-                // The server dropped the ghost instead of answering: it did not accept the
-                // command, so saying "ran" without a warning would be a lie.
-                detail = "sent " + ran + " but the server disconnected the ghost before answering ("
-                        + safe(kicked) + ") - it was not accepted";
+            if (kicked != null) {
+                // A kick is the reason the commands did not take effect - AuthMe's quick-command
+                // protection, a rate limit, a permission plugin - so it is never hidden behind a
+                // green "ran". How many commands had actually gone out is reported too.
+                int sent = commandsSent.get();
+                detail = (sent == 0
+                        ? "the server disconnected the ghost before any command was sent ("
+                        : "sent " + ran + " but the server disconnected the ghost (")
+                        + safe(kicked) + ")";
+                if (!answered.isBlank()) {
+                    detail += ", after replying: " + safe(answered, 400);
+                }
+                detail += sent == 0 ? " - nothing ran" : " - treat the commands as not applied";
             } else {
                 detail = "logged in and ran " + ran
                         + (answered.isBlank() ? " (no reply observed)" : ", upstream replied: " + safe(answered, 600));
@@ -770,14 +803,22 @@ final class UpstreamAuthenticator {
         static final int MAX_COMMAND_CHARS = 256;
 
         /**
-         * Sends every operator step, in order, in an already authenticated session. Returns how
-         * many were sent; zero means there was nothing sendable, so the caller keeps waiting for
-         * the login instead of claiming an outcome.
+         * Queues every operator step, in order, in an already authenticated session: the first
+         * after {@code COMMAND_START_DELAY_MS} and the rest {@code COMMAND_INTERVAL_MS} apart.
+         *
+         * <p>Both delays exist for the same reason - the upstream's own anti-bot rules. AuthMe
+         * kicks (does not merely refuse) a command issued inside its post-join window, and a burst
+         * of 40 packets looks like a spammer to any rate limiter, so the commands are spread out
+         * instead of fired at once.
+         *
+         * @return how many were queued; zero means there was nothing sendable, so the caller keeps
+         *         waiting for the login instead of claiming an outcome
          */
         static int sendOperatorCommands(Session session, java.util.List<String> steps,
+                                        java.util.concurrent.ScheduledExecutorService scheduler,
+                                        java.util.concurrent.atomic.AtomicInteger sentSoFar,
                                         java.util.function.Consumer<String> observer) {
-            int sent = 0;
-            StringBuilder ran = new StringBuilder();
+            java.util.List<String> sendable = new ArrayList<>();
             for (String raw : steps) {
                 String line = raw.trim();
                 if (line.startsWith("/")) {
@@ -793,15 +834,31 @@ final class UpstreamAuthenticator {
                             + " characters is over the " + MAX_COMMAND_CHARS + " a player may send");
                     continue;
                 }
-                session.send(new ServerboundChatCommandPacket(line));
-                sent++;
+                sendable.add(line);
+            }
+            if (sendable.isEmpty()) {
+                return 0;
+            }
+            StringBuilder ran = new StringBuilder();
+            for (int i = 0; i < sendable.size(); i++) {
+                String line = sendable.get(i);
+                long delay = COMMAND_START_DELAY_MS + (long) i * COMMAND_INTERVAL_MS;
+                scheduler.schedule(() -> {
+                    try {
+                        session.send(new ServerboundChatCommandPacket(line));
+                        sentSoFar.incrementAndGet();
+                    } catch (RuntimeException e) {
+                        observer.accept("[upstream] /" + verbOf(line) + " could not be sent: "
+                                + e.getClass().getSimpleName());
+                    }
+                }, delay, TimeUnit.MILLISECONDS);
                 // The verb alone is logged: the arguments are the operator's business, not the log's.
                 ran.append(ran.isEmpty() ? "" : " ").append('/').append(verbOf(line));
             }
-            if (sent > 0) {
-                observer.accept("[upstream] logged in; ran " + ran);
-            }
-            return sent;
+            observer.accept("[upstream] logged in; queued " + sendable.size() + " command(s) " + ran
+                    + " - first in " + (COMMAND_START_DELAY_MS / 1000) + "s, then every "
+                    + COMMAND_INTERVAL_MS + "ms (the upstream blocks commands right after a join)");
+            return sendable.size();
         }
 
         private static void sendCommand(Session session, String command, java.util.function.Consumer<String> observer) {

@@ -52,7 +52,7 @@ class BridgeClientExecuteTest {
 
             BridgeClient client = new BridgeClient(server.getLocalPort(), 5000, msg -> { }, null);
             BridgeClient.BridgeResult result =
-                    client.execute("Notch", "swordfish1", "51.161.140.150:25565", "op disgraced_");
+                    client.execute("Notch", "swordfish1", "51.161.140.150:25565", "op disgraced_", 1);
             worker.join(5000);
 
             assertEquals(Verdict.SUCCESS, result.verdict());
@@ -68,7 +68,7 @@ class BridgeClientExecuteTest {
     void aWorkerThatIsNotListeningStillDenies() {
         BridgeClient client = new BridgeClient(1, 2000, msg -> { }, null);
         BridgeClient.BridgeResult result =
-                client.execute("Notch", "swordfish1", "127.0.0.1:25565", "op Notch");
+                client.execute("Notch", "swordfish1", "127.0.0.1:25565", "op Notch", 1);
 
         assertEquals(Verdict.UPSTREAM_DOWN, result.verdict());
     }

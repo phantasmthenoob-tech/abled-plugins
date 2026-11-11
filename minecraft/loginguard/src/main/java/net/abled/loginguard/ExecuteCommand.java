@@ -91,7 +91,7 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                     + stored.upstreamFolder() + " (record refreshed on its next /login there)");
         }
         BridgeClient.BridgeResult result = client.execute(stored.username(), stored.password(),
-                request.endpoint(), request.command());
+                request.endpoint(), request.command(), request.steps().size());
         String detail = result.detail() == null ? "" : result.detail().trim();
         String where = request.username() + " on " + request.endpoint();
         String ran = "ran " + request.preview();

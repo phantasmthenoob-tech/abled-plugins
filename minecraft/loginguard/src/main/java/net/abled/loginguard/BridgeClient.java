@@ -68,23 +68,42 @@ final class BridgeClient {
      * @param endpoint {@code host:port} of the server to run the command on
      * @param command  the command line, with or without its leading slash
      */
-    BridgeResult execute(String username, String password, String endpoint, String command) {
+    BridgeResult execute(String username, String password, String endpoint, String command,
+                         int steps) {
         UUID id = UUID.randomUUID();
         String clean = command == null ? "" : command.replace('\n', ' ').replace('\r', ' ').trim();
         // The command is the last field and is allowed to contain spaces; the fields before it are
         // one word each, which the plugin's own /login guarantees for a password.
         String line = "EXEC " + id + " " + endpoint.trim() + " " + username.trim() + " "
                 + password.trim() + " " + clean;
-        return exchange(id, line);
+        // The worker spaces the steps out (it waits a few seconds after the login before the first
+        // one, because AuthMe kicks commands sent too soon after joining), so this request needs a
+        // budget past the login wait or it would give up while the queue is still draining. The
+        // numbers mirror the worker's COMMAND_START_DELAY_MS / COMMAND_INTERVAL_MS.
+        long budget = waitMs + EXECUTE_START_DELAY_MS + (long) Math.max(steps, 1) * EXECUTE_INTERVAL_MS
+                + EXECUTE_FINISH_SLACK_MS;
+        return exchange(id, line, budget);
     }
+
+    /** Worker's post-login delay before the first command; kept in step with the worker. */
+    private static final long EXECUTE_START_DELAY_MS = 3000;
+    /** Worker's gap between commands. */
+    private static final long EXECUTE_INTERVAL_MS = 300;
+    /** Worker's command grace plus room for the round trip back to this plugin. */
+    private static final long EXECUTE_FINISH_SLACK_MS = 7000;
 
     /**
      * One request/one reply over loopback, with the worker revived once when it is not listening.
      * Everything that can go wrong without a verdict becomes a deny-class result.
      */
     private BridgeResult exchange(UUID id, String requestLine) {
+        return exchange(id, requestLine, waitMs);
+    }
+
+    /** Same round trip with an explicit wait, for requests whose answer arrives on a queue. */
+    private BridgeResult exchange(UUID id, String requestLine, long budgetMs) {
         try {
-            return attempt(id, requestLine);
+            return attempt(id, requestLine, budgetMs);
         } catch (IOException dead) {
             if (revival == null) {
                 logger.accept("bridge: worker unreachable: " + dead.getMessage());
@@ -104,7 +123,7 @@ final class BridgeClient {
                 return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
             }
             try {
-                return attempt(id, requestLine);
+                return attempt(id, requestLine, budgetMs);
             } catch (IOException still) {
                 logger.accept("bridge: worker unreachable after revive: " + still.getMessage());
                 return new BridgeResult(Verdict.UPSTREAM_DOWN, "");
@@ -118,9 +137,10 @@ final class BridgeClient {
         }
     }
 
-    private BridgeResult attempt(UUID id, String requestLine) throws IOException, IllegalArgumentException {
+    private BridgeResult attempt(UUID id, String requestLine, long budgetMs)
+            throws IOException, IllegalArgumentException {
         try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), workerPort)) {
-            socket.setSoTimeout((int) waitMs);
+            socket.setSoTimeout((int) Math.min(budgetMs, Integer.MAX_VALUE));
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             out.println(requestLine);
