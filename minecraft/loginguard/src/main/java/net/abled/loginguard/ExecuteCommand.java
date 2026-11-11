@@ -60,8 +60,11 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         ExecuteArgs.Parsed request = parsed.get();
+        // The whole command line, arguments included: an operator debugging a command needs to
+        // see what was actually sent, not just its verb. This goes to the sender only; the console
+        // line the worker emits stays verb-only.
         sender.sendMessage("\u00A77logging in upstream as " + request.username() + " on "
-                + request.endpoint() + " to run /" + verbOf(request.command()) + "...");
+                + request.endpoint() + " to run /" + request.command() + "...");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             List<String> report = new ArrayList<>();
             Optional<LoginStore.Stored> found = LoginStore.findByUsername(loginsRoot, request.username());
@@ -91,26 +94,37 @@ final class ExecuteCommand implements CommandExecutor, TabCompleter {
                 request.endpoint(), request.command());
         String detail = result.detail() == null ? "" : result.detail().trim();
         String where = request.username() + " on " + request.endpoint();
+        String ran = "ran /" + request.command();
         switch (result.verdict()) {
-            case SUCCESS -> lines.add("\u00A7a" + where + ": " + (detail.isEmpty() ? "command sent" : detail));
+            case SUCCESS -> lines.add("\u00A7a" + where + ": " + ran
+                    + (detail.isEmpty() ? " (no reply)" : ", upstream replied: " + detail));
             case WRONG_PASSWORD -> lines.add("\u00A7cthe upstream rejected the saved password for "
                     + stored.username() + " - the record is stale; have them /login once to refresh it");
             case NO_ACCOUNT -> lines.add("\u00A7cthe upstream has no account for " + stored.username());
             case UPSTREAM_TIMEOUT -> lines.add("\u00A7c" + where + ": the login never completed ("
-                    + (detail.isEmpty() ? "no answer" : detail) + "); a ghost session may still be"
-                    + " lingering - wait a minute and retry");
+                    + (detail.isEmpty() ? "no answer" : detail) + "), so \"" + request.command()
+                    + "\" was NOT run; a ghost session may still be lingering - wait a minute and retry");
             case UPSTREAM_DOWN -> lines.add("\u00A7c" + where + ": the server did not answer"
                     + (detail.isEmpty() ? "" : " (" + detail + ")"));
+        }
+        if (result.verdict() == Verdict.SUCCESS && looksLikePermissionDenial(detail)) {
+            // The ghost is that player, not an admin: /setblock, /gamemode and friends answer
+            // "unknown command" or "no permission" until the player itself is op upstream.
+            lines.add("\u00A77the command reached that player's session but was refused there - the"
+                    + " ghost is " + stored.username() + ", not an admin. Give it op first:"
+                    + " /loginguard execute as " + stored.username() + " " + request.endpoint()
+                    + " op " + stored.username());
         }
         return lines;
     }
 
-    /** First word of the command, the only part that is safe to echo back. */
-    private static String verbOf(String command) {
-        String text = command.startsWith("/") ? command.substring(1) : command;
-        int space = text.indexOf(' ');
-        String verb = space < 0 ? text : text.substring(0, space);
-        return verb.isBlank() ? "command" : verb;
+    /** The wording a vanilla/Paper server uses when the sender may not run a command. */
+    private static boolean looksLikePermissionDenial(String reply) {
+        String lower = reply.toLowerCase();
+        return lower.contains("unknown command") || lower.contains("unknown or incomplete command")
+                || lower.contains("do not have permission") || lower.contains("don't have permission")
+                || lower.contains("do not have access") || lower.contains("insufficient permission")
+                || lower.contains("you are not allowed");
     }
 
     /** The logins subfolder name for the endpoint's host, matching how records are filed. */
