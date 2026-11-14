@@ -1,0 +1,8 @@
+{
+  "name": "mineflayer-join",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": { "start": "node join.js" },
+  "dependencies": { "mineflayer": "^4.32.0" }
+}
